@@ -1,0 +1,8 @@
+{
+  "track_id": "signup-login_20261028",
+  "type": "feature",
+  "status": "new",
+  "created_at": "2026-10-28T11:51:39Z",
+  "updated_at": "2026-10-28T11:51:39Z",
+  "description": "US-16.1–16.3 — signup/login with opaque tokens and UserRegistered outbox event"
+}

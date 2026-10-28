@@ -2,6 +2,9 @@
 
 This file tracks all major tracks for the project.
 
+- [~] **Track: US-16.1–16.3 — signup, login, UserRegistered**
+  *Link: [./tracks/signup-login_20261028/](./tracks/signup-login_20261028/)*
+
 ---
 
 ## Backlog
@@ -11,8 +14,5 @@ folder), so `/conductor:implement` cannot pick these up by accident. Reorder fre
 priorities change. When ready to work on one, run `/conductor:newTrack <title>` to go
 through the spec/plan questions and promote it into a real track above.
 
-- US-16.1 — `POST /auth/signup`: create user, issue token
-- US-16.2 — `POST /auth/login`: authenticate, issue token + refreshToken
-- US-16.3 — publish `user-events: UserRegistered` on signup
 
 ---
