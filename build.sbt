@@ -43,8 +43,7 @@ lazy val root = project
     version := "0.1.0",
     // Drives the sbt-purekafka-docs plugin's asyncApiGenerateSpec/
     // asyncApiGenerate tasks, auto-chained after Compile/compile - see
-    // examples/ExampleAsyncApiChannels.scala
-    // (userservice.examples.ExampleAsyncApiChannels, an
+    // AsyncApiChannels.scala (userservice.AsyncApiChannels, an
     // AsyncApiChannelsProvider). Title/version match AppRoutes.scala's own
     // Docs.routes[F]("User Service", "1.0", ...)
     // call for the live /docs/asyncapi.json route - otherwise the
@@ -96,11 +95,9 @@ lazy val root = project
     Universal / javaOptions += "-Dlogback.configurationFile=logback-docker.xml",
     libraryDependencies ++= Seq(
       "io.github.beckfordp" %% "purerestlib" % purerestlibVersion,
-      // purekafka: Kafka resilience/observability combinators (stream
-      // supervision, dead-letter routing, generic F[A] call resilience) —
-      // used by the generated producer/consumer examples (see
-      // src/test/scala/userservice/examples/) and by the always-on
-      // AsyncAPI channel registration (src/main/scala/userservice/examples/).
+      // purekafka: Kafka resilience/observability combinators and AsyncAPI
+      // docs — used by the always-on AsyncApiChannels registration and the
+      // test-only resilience examples under src/test/.../examples/.
       "io.github.beckfordp" %% "purekafka" % purekafkaVersion,
       "com.github.fd4s" %% "fs2-kafka" % fs2KafkaVersion,
       "org.typelevel" %% "cats-effect" % catsEffectVersion,
