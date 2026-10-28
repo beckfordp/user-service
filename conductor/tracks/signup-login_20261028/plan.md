@@ -38,3 +38,6 @@
 - No refresh endpoint: refresh tokens are stored/returned as the contract requires, but cannot be exchanged yet (out of scope).
 - Debezium needs `wal_level=logical` on the user Postgres; copy the per-service deployment pattern from an existing service.
 - Live deploy adds a seventh service to the cluster; the demo frontends are unaffected.
+
+## Phase: Review Fixes
+- [x] Task: Apply review suggestions — updated stale `build.sbt` comments left after removing the example AsyncAPI channels; every other finding checked clean (no code changes needed) `89c326e`
