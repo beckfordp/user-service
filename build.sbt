@@ -51,7 +51,7 @@ lazy val root = project
     // build-time generated docs default to name.value/version.value
     // ("user-service"/"0.1.0") and silently disagree with what's
     // actually served live.
-    asyncApiChannelsClass := "userservice.examples.ExampleAsyncApiChannels",
+    asyncApiChannelsClass := "userservice.AsyncApiChannels",
     asyncApiTitle := "User Service",
     asyncApiVersion := "1.0",
     // Drives schemaRegistryCheck (Rework 5 step 3/4, ADR 0003) - reuses
@@ -114,6 +114,7 @@ lazy val root = project
       "com.softwaremill.sttp.tapir" %% "tapir-http4s-server" % tapirVersion,
       // skunk: non-blocking, pure-FP Postgres access — this service's persistence layer.
       "org.tpolecat" %% "skunk-core" % skunkVersion,
+      "org.tpolecat" %% "skunk-circe" % skunkVersion,
       // flyway: JDBC-based schema migration tool, run on startup to create/update the
       // user table. Independent of Skunk (which handles all runtime queries).
       "org.flywaydb" % "flyway-core" % flywayVersion,

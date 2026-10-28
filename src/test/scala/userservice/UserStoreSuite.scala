@@ -3,114 +3,106 @@ package userservice
 import cats.effect.IO
 import munit.CatsEffectSuite
 
-import scala.concurrent.duration._
+import java.time.Instant
 
 class UserStoreSuite extends CatsEffectSuite {
 
-  test("create returns a persisted entity with a generated id") {
-    for {
-      store <- UserStore.inMemory[IO]
-      entity <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-    } yield assert(entity.id.nonEmpty)
-  }
+  private val envelope = EventEnvelope(
+    eventId = "event-1",
+    eventType = "UserRegistered",
+    timestamp = Instant.parse("2026-10-28T12:00:00Z"),
+    source = "user-service",
+    correlationId = "user-1",
+    payload = io.circe.Json.obj(
+      "userId" -> io.circe.Json.fromString("user-1"),
+      "email" -> io.circe.Json.fromString("ada@example.com")
+    )
+  )
 
-  test("get returns the persisted entity") {
-    for {
-      store <- UserStore.inMemory[IO]
-      created <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-      found <- store.get(created.id)
-    } yield assertEquals(found, Some(created))
-  }
+  private def token(
+      id: String,
+      userId: String,
+      kind: TokenKind,
+      expiresAt: Instant = Instant.parse("2026-10-28T13:00:00Z")
+  ): NewToken =
+    NewToken(id, userId, s"hash-$id", kind.wire, expiresAt)
 
-  test("get returns None for an unknown id") {
+  test("createAccount stores the account and its access token") {
     for {
-      store <- UserStore.inMemory[IO]
-      found <- store.get("unknown-id")
-    } yield assertEquals(found, None)
-  }
-
-  test("create produces distinct ids across calls") {
-    for {
-      store <- UserStore.inMemory[IO]
-      first <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-      second <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-    } yield assertNotEquals(first.id, second.id)
-  }
-
-  test("update returns the updated entity with updatedAt not moving backwards") {
-    for {
-      store <- UserStore.inMemory[IO]
-      created <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-      updated <- store.update(created.id/* codegen:fields:TEST_UPDATE_ARGS */)
-    } yield {
-      assertEquals(updated.map(_.id), Some(created.id))
-      assert(
-        updated.exists(!_.updatedAt.isBefore(created.updatedAt)),
-        s"expected updatedAt not to move backwards, got: $updated"
+      (store, outbox) <- UserStore.inMemoryWithOutbox[IO]
+      result <- store.createAccount(
+        "user-1",
+        "ada@example.com",
+        "pbkdf2$1000$salt$hash",
+        token("token-1", "user-1", TokenKind.Access),
+        envelope
       )
-    }
-  }
-
-  test("update returns None for an unknown id") {
-    for {
-      store <- UserStore.inMemory[IO]
-      result <- store.update("unknown-id"/* codegen:fields:TEST_UPDATE_ARGS */)
-    } yield assertEquals(result, None)
-  }
-
-  test("delete removes the entity and returns true, and get then returns None") {
-    for {
-      store <- UserStore.inMemory[IO]
-      created <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-      deleted <- store.delete(created.id)
-      found <- store.get(created.id)
+      found <- store.findByEmail("ada@example.com")
+      events <- outbox.get
     } yield {
-      assert(deleted)
-      assertEquals(found, None)
+      assertEquals(result.map(_.id), Right("user-1"))
+      assertEquals(found.map(_.email), Some("ada@example.com"))
+      assertEquals(events.map(_._1), List("user-1"))
+      assertEquals(events.map(_._2.eventType), List("UserRegistered"))
     }
   }
 
-  test("delete returns false for an unknown id") {
+  test("createAccount rejects a duplicate email and writes nothing extra") {
     for {
-      store <- UserStore.inMemory[IO]
-      deleted <- store.delete("unknown-id")
-    } yield assert(!deleted)
-  }
-
-  test("list returns newest-first pages with the total count") {
-    for {
-      store <- UserStore.inMemory[IO]
-      first <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-      _ <- IO.sleep(2.millis)
-      second <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-      _ <- IO.sleep(2.millis)
-      _ <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-      (page, total) <- store.list(limit = 2, offset = 1)
+      (store, outbox) <- UserStore.inMemoryWithOutbox[IO]
+      _ <- store.createAccount(
+        "user-1",
+        "ada@example.com",
+        "hash-a",
+        token("token-1", "user-1", TokenKind.Access),
+        envelope
+      )
+      duplicate <- store.createAccount(
+        "user-2",
+        "ada@example.com",
+        "hash-b",
+        token("token-2", "user-2", TokenKind.Access),
+        envelope
+      )
+      events <- outbox.get
     } yield {
-      assertEquals(page.map(_.id), List(second.id, first.id))
-      assertEquals(total, 3L)
+      assertEquals(duplicate, Left(DuplicateEmail))
+      assertEquals(events.size, 1)
     }
   }
 
-  test("list on an empty store returns no entities and a zero total") {
+  test("findByEmail returns the stored password hash and None when unknown") {
     for {
       store <- UserStore.inMemory[IO]
-      (page, total) <- store.list(limit = 20, offset = 0)
+      _ <- store.createAccount(
+        "user-1",
+        "ada@example.com",
+        "stored-hash",
+        token("token-1", "user-1", TokenKind.Access),
+        envelope
+      )
+      found <- store.findByEmail("ada@example.com")
+      missing <- store.findByEmail("unknown@example.com")
     } yield {
-      assertEquals(page, Nil)
-      assertEquals(total, 0L)
+      assertEquals(found.map(_.passwordHash), Some("stored-hash"))
+      assertEquals(missing, None)
     }
   }
 
-  test("list past the end returns an empty page with the full total") {
+  test("recordLoginTokens accepts the access and refresh pair") {
     for {
       store <- UserStore.inMemory[IO]
-      _ <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-      _ <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-      (page, total) <- store.list(limit = 10, offset = 5)
-    } yield {
-      assertEquals(page, Nil)
-      assertEquals(total, 2L)
-    }
+      _ <- store.createAccount(
+        "user-1",
+        "ada@example.com",
+        "hash",
+        token("token-1", "user-1", TokenKind.Access),
+        envelope
+      )
+      result <- store.recordLoginTokens(
+        token("token-2", "user-1", TokenKind.Access),
+        token("token-3", "user-1", TokenKind.Refresh)
+      )
+    } yield assertEquals(result, ())
   }
 }

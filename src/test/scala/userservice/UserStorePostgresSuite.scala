@@ -8,15 +8,11 @@ import munit.CatsEffectSuite
 import org.testcontainers.utility.DockerImageName
 import org.typelevel.otel4s.metrics.Meter
 import purerest.metrics.Metrics
-import skunk.Session
-import skunk.implicits._
 
-import scala.concurrent.duration._
-import scala.jdk.CollectionConverters._
+import java.sql.DriverManager
+import java.time.Instant
 
-class UserStorePostgresSuite
-    extends CatsEffectSuite
-    with TestContainerForAll {
+class UserStorePostgresSuite extends CatsEffectSuite with TestContainerForAll {
 
   override val containerDef: PostgreSQLContainer.Def =
     PostgreSQLContainer.Def(dockerImageName =
@@ -32,362 +28,221 @@ class UserStorePostgresSuite
       password = postgres.password
     )
 
-  // TestContainerForAll shares one Postgres instance (and its "user"
-  // table) across every test in this suite, so the `list` tests -- the only
-  // ones here that assert over the *whole* table rather than rows looked up
-  // by their own id -- truncate first for isolation.
-  private def truncateUserTable(config: PostgresConfig): IO[Unit] = {
-    import org.typelevel.otel4s.trace.Tracer.Implicits.noop
-    import org.typelevel.otel4s.metrics.Meter.Implicits.noop
-    Session
-      .single[IO](
-        host = config.host,
-        port = config.port,
-        user = config.user,
-        database = config.database,
-        password = Some(config.password)
-      )
-      .use(_.execute(sql"""TRUNCATE TABLE "user"""".command).void)
-  }
-
-  test("create persists an entity and returns it with a generated id") {
-    withContainers { postgres =>
-      val config = configFor(postgres)
-      Migrations.run[IO](config) *> UserStore
-        .postgres[IO](config, Meter.noop[IO])
-        .use { store =>
-          store.create(/* codegen:fields:TEST_CREATE_ARGS */).map { entity =>
-            assert(entity.id.nonEmpty)
-          }
-        }
-    }
-  }
-
-  test("create produces distinct ids across calls") {
-    withContainers { postgres =>
-      val config = configFor(postgres)
-      Migrations
-        .run[IO](config) *> UserStore
-        .postgres[IO](config, Meter.noop[IO])
-        .use { store =>
-          for {
-            first <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-            second <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-          } yield assertNotEquals(first.id, second.id)
-        }
-    }
-  }
-
-  test("get returns the persisted entity") {
-    withContainers { postgres =>
-      val config = configFor(postgres)
-      Migrations.run[IO](config) *> UserStore
-        .postgres[IO](config, Meter.noop[IO])
-        .use { store =>
-          for {
-            created <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-            found <- store.get(created.id)
-          } yield assertEquals(found, Some(created))
-        }
-    }
-  }
-
-  test("get returns None for an unknown id") {
-    withContainers { postgres =>
-      val config = configFor(postgres)
-      Migrations.run[IO](config) *> UserStore
-        .postgres[IO](config, Meter.noop[IO])
-        .use { store =>
-          store
-            .get(java.util.UUID.randomUUID().toString)
-            .map(assertEquals(_, None))
-        }
-    }
-  }
-
-  test("get returns None for a malformed (non-UUID) id") {
-    withContainers { postgres =>
-      val config = configFor(postgres)
-      Migrations.run[IO](config) *> UserStore
-        .postgres[IO](config, Meter.noop[IO])
-        .use { store =>
-          store.get("not-a-uuid").map(assertEquals(_, None))
-        }
-    }
-  }
-
-  test("update returns the updated entity and returns it") {
-    withContainers { postgres =>
-      val config = configFor(postgres)
-      Migrations.run[IO](config) *> UserStore
-        .postgres[IO](config, Meter.noop[IO])
-        .use { store =>
-          for {
-            created <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-            updated <- store.update(created.id/* codegen:fields:TEST_UPDATE_ARGS */)
-          } yield {
-            assertEquals(updated.map(_.id), Some(created.id))
-            assert(
-              updated.exists(!_.updatedAt.isBefore(created.updatedAt)),
-              s"expected updatedAt not to move backwards, got: $updated"
-            )
-          }
-        }
-    }
-  }
-
-  test("update returns None for an unknown id") {
-    withContainers { postgres =>
-      val config = configFor(postgres)
-      Migrations.run[IO](config) *> UserStore
-        .postgres[IO](config, Meter.noop[IO])
-        .use { store =>
-          store
-            .update(java.util.UUID.randomUUID().toString/* codegen:fields:TEST_UPDATE_ARGS */)
-            .map(assertEquals(_, None))
-        }
-    }
-  }
-
-  test("update returns None for a malformed (non-UUID) id") {
-    withContainers { postgres =>
-      val config = configFor(postgres)
-      Migrations.run[IO](config) *> UserStore
-        .postgres[IO](config, Meter.noop[IO])
-        .use { store =>
-          store.update("not-a-uuid"/* codegen:fields:TEST_UPDATE_ARGS */).map(assertEquals(_, None))
-        }
-    }
-  }
-
-  test("delete removes the entity and returns true, and get then returns None") {
-    withContainers { postgres =>
-      val config = configFor(postgres)
-      Migrations.run[IO](config) *> UserStore
-        .postgres[IO](config, Meter.noop[IO])
-        .use { store =>
-          for {
-            created <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-            deleted <- store.delete(created.id)
-            found <- store.get(created.id)
-          } yield {
-            assert(deleted)
-            assertEquals(found, None)
-          }
-        }
-    }
-  }
-
-  test("delete returns false for an unknown id") {
-    withContainers { postgres =>
-      val config = configFor(postgres)
-      Migrations.run[IO](config) *> UserStore
-        .postgres[IO](config, Meter.noop[IO])
-        .use { store =>
-          store
-            .delete(java.util.UUID.randomUUID().toString)
-            .map(deleted => assert(!deleted))
-        }
-    }
-  }
-
-  test("delete returns false for a malformed (non-UUID) id") {
-    withContainers { postgres =>
-      val config = configFor(postgres)
-      Migrations.run[IO](config) *> UserStore
-        .postgres[IO](config, Meter.noop[IO])
-        .use { store =>
-          store.delete("not-a-uuid").map(deleted => assert(!deleted))
-        }
-    }
-  }
-
-  test("ping returns true against a real, reachable database") {
-    withContainers { postgres =>
-      val config = configFor(postgres)
-      Migrations.run[IO](config) *> UserStore
-        .postgres[IO](config, Meter.noop[IO])
-        .use { store =>
-          store.ping.map(assert(_))
-        }
-    }
-  }
-
-  test("ping returns false when the database is unreachable") {
-    withContainers { postgres =>
-      val unreachableConfig = configFor(postgres).copy(port = 1)
+  private def withStore[A](postgres: PostgreSQLContainer)(
+      f: UserStore[IO] => IO[A]
+  ): IO[A] =
+    Migrations.run[IO](configFor(postgres)) *>
       UserStore
-        .postgres[IO](unreachableConfig, Meter.noop[IO])
-        .use { store =>
-          store.ping.map(ready => assert(!ready))
-        }
-    }
-  }
+        .postgres[IO](configFor(postgres), Meter.noop[IO])
+        .use(f)
 
-  test(
-    "create and get each record a db.client.operation.duration measurement, tagged by operation"
-  ) {
+  private def query(
+      postgres: PostgreSQLContainer,
+      sql: String
+  ): IO[List[String]] =
+    IO.blocking {
+      val conn = DriverManager.getConnection(
+        postgres.jdbcUrl,
+        postgres.username,
+        postgres.password
+      )
+      try {
+        val rs = conn.createStatement().executeQuery(sql)
+        Iterator
+          .unfold(())(_ => if (rs.next()) Some((rs.getString(1), ())) else None)
+          .toList
+      } finally conn.close()
+    }
+
+  private val envelope = EventEnvelope(
+    eventId = "event-1",
+    eventType = "UserRegistered",
+    timestamp = Instant.parse("2026-10-28T12:00:00Z"),
+    source = "user-service",
+    correlationId = "user-1",
+    payload = io.circe.Json.obj(
+      "userId" -> io.circe.Json.fromString("user-1"),
+      "email" -> io.circe.Json.fromString("ada@example.com")
+    )
+  )
+
+  private def token(
+      id: String,
+      userId: String,
+      kind: TokenKind
+  ): NewToken =
+    NewToken(id, userId, s"hash-$id", kind.wire, Instant.now().plusSeconds(3600))
+
+  private def uniqueId(): String = java.util.UUID.randomUUID().toString
+
+  test("createAccount writes the account, token and outbox row atomically") {
     withContainers { postgres =>
-      val config = configFor(postgres)
-      Metrics.test[IO]("user-store-postgres-metrics-test").use {
-        testMeter =>
-          Migrations.run[IO](config) *> UserStore
-            .postgres[IO](config, testMeter.meter)
-            .use { store =>
-              for {
-                created <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-                _ <- store.get(created.id)
-                metrics <- testMeter.collectMetrics
-              } yield {
-                val data =
-                  metrics.find(_.getName == "db.client.operation.duration")
-                assert(
-                  data.isDefined,
-                  s"expected a db.client.operation.duration series, got: $metrics"
-                )
-                val dbOperationKey =
-                  io.opentelemetry.api.common.AttributeKey
-                    .stringKey("db.operation")
-                val operations = data.get.getHistogramData.getPoints.asScala
-                  .flatMap(point =>
-                    Option(point.getAttributes.get(dbOperationKey))
-                  )
-                  .toSet
-                assert(
-                  operations
-                    .contains("insert") && operations.contains("select"),
-                  s"expected db.operation attributes for both insert and select, got: $operations"
-                )
-              }
-            }
+      withStore(postgres) { store =>
+        val userId = uniqueId()
+        val tokenId = uniqueId()
+        for {
+          result <- store.createAccount(
+            userId,
+            "ada@example.com",
+            "pbkdf2$1000$salt$hash",
+            token(tokenId, userId, TokenKind.Access),
+            envelope.copy(correlationId = userId)
+          )
+          tokens <- query(
+            postgres,
+            s"select id from auth_tokens where user_id = '$userId'"
+          )
+          outbox <- query(
+            postgres,
+            s"select event_type from (select payload->>'eventType' as event_type from outbox_events where aggregate_id = '$userId') t"
+          )
+        } yield {
+          assertEquals(result.map(_.id), Right(userId))
+          assertEquals(tokens, List(tokenId))
+          assertEquals(outbox, List("UserRegistered"))
+        }
       }
     }
   }
 
-  test(
-    "a failing query records a db.client.operation.duration measurement tagged with error.type"
-  ) {
+  test("a duplicate email writes no extra token or outbox row") {
     withContainers { postgres =>
-      // Port 1 is a privileged port nothing binds to in these tests; unlike
-      // `mappedPort(5432) + 1`, it can't collide with another concurrently-running
-      // Testcontainers Postgres instance's dynamically assigned port.
-      val unreachableConfig = configFor(postgres).copy(port = 1)
-      Metrics.test[IO]("user-store-postgres-metrics-test").use {
-        testMeter =>
-          UserStore
-            .postgres[IO](unreachableConfig, testMeter.meter)
-            .use { store =>
-              for {
-                result <- store.create(/* codegen:fields:TEST_CREATE_ARGS */).attempt
-                metrics <- testMeter.collectMetrics
-              } yield {
-                assert(
-                  result.isLeft,
-                  s"expected the connection failure to propagate, got: $result"
-                )
-                val data =
-                  metrics.find(_.getName == "db.client.operation.duration")
-                assert(
-                  data.isDefined,
-                  s"expected a db.client.operation.duration series, got: $metrics"
-                )
-                val errorTypeKey =
-                  io.opentelemetry.api.common.AttributeKey.stringKey(
-                    "error.type"
-                  )
-                val hasErrorAttribute =
-                  data.get.getHistogramData.getPoints.asScala
-                    .exists(point =>
-                      Option(point.getAttributes.get(errorTypeKey)).isDefined
-                    )
-                assert(
-                  hasErrorAttribute,
-                  s"expected a point tagged with error.type, got: ${data.get.getHistogramData.getPoints}"
-                )
-              }
-            }
+      withStore(postgres) { store =>
+        val firstUser = uniqueId()
+        val secondUser = uniqueId()
+        for {
+          _ <- store.createAccount(
+            firstUser,
+            "dup@example.com",
+            "hash-a",
+            token(uniqueId(), firstUser, TokenKind.Access),
+            envelope
+          )
+          duplicate <- store.createAccount(
+            secondUser,
+            "dup@example.com",
+            "hash-b",
+            token(uniqueId(), secondUser, TokenKind.Access),
+            envelope
+          )
+          users <- query(
+            postgres,
+            "select id from user_account where email = 'dup@example.com'"
+          )
+        } yield {
+          assertEquals(duplicate, Left(DuplicateEmail))
+          assertEquals(users.size, 1)
+        }
       }
     }
   }
 
-  test(
-    "full CRUD lifecycle: create -> read -> patch -> delete -> read-404, plus a readiness check"
-  ) {
+  test("findByEmail returns the stored password hash") {
     withContainers { postgres =>
-      val config = configFor(postgres)
-      Migrations.run[IO](config) *> UserStore
-        .postgres[IO](config, Meter.noop[IO])
-        .use { store =>
-          for {
-            ready <- store.ping
-            created <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-            read1 <- store.get(created.id)
-            updated <- store.update(created.id/* codegen:fields:TEST_UPDATE_ARGS */)
-            read2 <- store.get(created.id)
-            deleted <- store.delete(created.id)
-            read3 <- store.get(created.id)
-          } yield {
-            assert(ready, "expected the database to be ready")
-            assertEquals(read1, Some(created))
-            // codegen:fields:TEST_LIFECYCLE_ASSERT
-            assertEquals(read2, updated)
-            assert(deleted, "expected delete to report the entity existed")
-            assertEquals(read3, None)
-          }
+      withStore(postgres) { store =>
+        for {
+          userId <- IO(uniqueId())
+          _ <- store.createAccount(
+            userId,
+            "lookup@example.com",
+            "stored-hash",
+            token(uniqueId(), userId, TokenKind.Access),
+            envelope
+          )
+          found <- store.findByEmail("lookup@example.com")
+          missing <- store.findByEmail("missing@example.com")
+        } yield {
+          assertEquals(found.map(_.passwordHash), Some("stored-hash"))
+          assertEquals(missing, None)
         }
+      }
     }
   }
 
-  test("list returns a newest-first page and the total row count") {
+  test("recordLoginTokens stores both tokens") {
     withContainers { postgres =>
-      val config = configFor(postgres)
-      Migrations.run[IO](config) *> truncateUserTable(config) *> UserStore
-        .postgres[IO](config, Meter.noop[IO])
-        .use { store =>
-          for {
-            first <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-            _ <- IO.sleep(2.millis)
-            second <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-            _ <- IO.sleep(2.millis)
-            _ <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-            (page, total) <- store.list(limit = 2, offset = 1)
-          } yield {
-            assertEquals(page, List(second, first))
-            assertEquals(total, 3L)
-          }
-        }
+      withStore(postgres) { store =>
+        val userId = uniqueId()
+        val accessId = uniqueId()
+        val refreshId = uniqueId()
+        for {
+          _ <- store.createAccount(
+            userId,
+            "login@example.com",
+            "hash",
+            token(uniqueId(), userId, TokenKind.Access),
+            envelope
+          )
+          _ <- store.recordLoginTokens(
+            token(accessId, userId, TokenKind.Access),
+            token(refreshId, userId, TokenKind.Refresh)
+          )
+          kinds <- query(
+            postgres,
+            s"select kind from auth_tokens where user_id = '$userId' and id in ('$accessId', '$refreshId') order by kind"
+          )
+        } yield assertEquals(kinds, List("access", "refresh"))
+      }
     }
   }
 
-  test("list on an empty table returns no entities and a zero total") {
+  test("createAccount rolls back the account when the outbox write fails") {
     withContainers { postgres =>
-      val config = configFor(postgres)
-      Migrations.run[IO](config) *> truncateUserTable(config) *> UserStore
-        .postgres[IO](config, Meter.noop[IO])
-        .use { store =>
-          store.list(limit = 20, offset = 0).map { case (page, total) =>
-            assertEquals(page, Nil)
-            assertEquals(total, 0L)
+      withStore(postgres) { store =>
+        val userId = uniqueId()
+        for {
+          _ <- IO.blocking {
+            val conn = DriverManager.getConnection(
+              postgres.jdbcUrl,
+              postgres.username,
+              postgres.password
+            )
+            try
+              conn
+                .createStatement()
+                .execute(
+                  "alter table outbox_events add constraint reject_all check (false) not valid"
+                )
+            finally conn.close()
           }
+          result <- store
+            .createAccount(
+              userId,
+              "rollback@example.com",
+              "hash",
+              token(uniqueId(), userId, TokenKind.Access),
+              envelope
+            )
+            .attempt
+          _ <- IO.blocking {
+            val conn = DriverManager.getConnection(
+              postgres.jdbcUrl,
+              postgres.username,
+              postgres.password
+            )
+            try
+              conn
+                .createStatement()
+                .execute("alter table outbox_events drop constraint reject_all")
+            finally conn.close()
+          }
+        } yield {
+          assert(result.isLeft)
+          assertEquals(
+            query(
+              postgres,
+              s"select id from user_account where id = '$userId'"
+            ).unsafeRunSync(),
+            Nil
+          )
         }
+      }
     }
   }
 
-  test("list past the end returns an empty page with the full total") {
+  test("ping reports the database is reachable") {
     withContainers { postgres =>
-      val config = configFor(postgres)
-      Migrations.run[IO](config) *> truncateUserTable(config) *> UserStore
-        .postgres[IO](config, Meter.noop[IO])
-        .use { store =>
-          for {
-            _ <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-            _ <- store.create(/* codegen:fields:TEST_CREATE_ARGS */)
-            (page, total) <- store.list(limit = 10, offset = 5)
-          } yield {
-            assertEquals(page, Nil)
-            assertEquals(total, 2L)
-          }
-        }
+      withStore(postgres)(_.ping.map(ready => assert(ready)))
     }
   }
 }

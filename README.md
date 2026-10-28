@@ -27,29 +27,15 @@ sbt run                # runs migrations, then starts the service on :8080
 Then, in another terminal:
 
 ```
-# Create a user
-curl -X POST http://localhost:8080/users \
-  -H "Content-Type: application/json" -d '{"item":"widget","quantity":3}'
+# Sign up (201 {userId, token}); duplicate email -> 409, invalid input -> 400
+curl -X POST http://localhost:8080/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{"email":"ada@example.com","password":"correct horse battery"}'
 
-# Read it back (substitute the id from the response above)
-curl http://localhost:8080/users/<id>
-
-# List a page of them, newest first. limit defaults to 20 (max 100), offset
-# defaults to 0; the collection's total size comes back in the X-Total-Count
-# response header. Out-of-range limit/offset values return 400.
-curl -i "http://localhost:8080/users?limit=10&offset=0"
-
-# Partially update it (quantity/status)
-curl -X PATCH http://localhost:8080/users/<id> \
-  -H "Content-Type: application/json" -d '{"quantity":5,"status":"shipped"}'
-
-# Or fully replace it (same required fields as PATCH — this resource has no
-# other client-writable ones — but PUT is idempotent full-replace semantics)
-curl -X PUT http://localhost:8080/users/<id> \
-  -H "Content-Type: application/json" -d '{"quantity":5,"status":"shipped"}'
-
-# Delete it
-curl -X DELETE http://localhost:8080/users/<id>
+# Log in (200 {token, refreshToken}); unknown email/wrong password -> 401
+curl -X POST http://localhost:8080/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"ada@example.com","password":"correct horse battery"}'
 
 # Liveness / readiness
 curl http://localhost:8080/health
@@ -61,11 +47,10 @@ Swagger UI (generated from the same tapir endpoint definitions as the real route
 
 ## View Kafka AsyncAPI docs
 
-This service registers one illustrative Kafka channel (`ExampleEvent` on `user-events`)
-for [AsyncAPI](https://www.asyncapi.com/) documentation via `purekafka.docs` (see
-`ExampleAsyncApiChannels`), the same way tapir generates the OpenAPI docs above. Replace it with
-your real event types in the same file (or a new one, updating `build.sbt`'s
-`asyncApiChannelsClass`).
+This service publishes `UserRegistered` on `user-events` through its transactional outbox
+(Debezium CDC, ADR 0008/0009) and registers it for [AsyncAPI](https://www.asyncapi.com/)
+documentation via `purekafka.docs` (see `AsyncApiChannels`), the same way tapir generates the
+OpenAPI docs above.
 
 Generation is handled by the `sbt-purekafka-docs` plugin (`asyncApiChannelsClass` in
 `build.sbt`), auto-chained after `Compile / compile` — every `sbt compile`/`run`/

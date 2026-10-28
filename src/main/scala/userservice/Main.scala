@@ -4,8 +4,6 @@ import cats.effect.{IO, IOApp, Resource}
 import com.comcast.ip4s._
 import org.http4s.ember.server.EmberServerBuilder
 
-import userservice.examples.ExampleAsyncApiChannels
-
 /** Acquires every dependency this service needs, delegates route assembly to
   * `AppRoutes.all`, and serves the result — a single flat `Resource`
   * for-comprehension, one `<-` per dependency. Every dependency that isn't
@@ -42,7 +40,8 @@ object Main extends IOApp.Simple {
     routes = AppRoutes.all[IO](
       store,
       telemetry,
-      ExampleAsyncApiChannels.channels
+      config.auth,
+      AsyncApiChannels.channels
     )
     _ <- EmberServerBuilder
       .default[IO]

@@ -4,154 +4,147 @@ import cats.effect.{Async, Ref, Resource, Sync}
 import cats.effect.std.Console
 import cats.syntax.all._
 import fs2.io.net.Network
+import io.circe.syntax._
 import org.typelevel.otel4s.Attribute
 import org.typelevel.otel4s.metrics.Meter
 import skunk.Session
+import skunk.circe.codec.all.jsonb
 import skunk.codec.all._
 import skunk.implicits._
 
-import java.time.OffsetDateTime
+import java.time.{Instant, OffsetDateTime}
 import java.util.UUID
 import scala.concurrent.duration.SECONDS
 
-final case class User(
+final case class UserAccount(id: String, email: String, createdAt: Instant)
+
+/** Internal lookup row for login: carries the stored password hash. */
+final case class StoredAccount(id: String, email: String, passwordHash: String)
+
+/** A token about to be persisted; its raw value never reaches the store. */
+final case class NewToken(
     id: String,
-    // codegen:fields:CASE_CLASS_FIELD
-    createdAt: java.time.Instant,
-    updatedAt: java.time.Instant
+    userId: String,
+    hash: String,
+    kind: String,
+    expiresAt: Instant
 )
 
+sealed trait CreateAccountError
+
+case object DuplicateEmail extends CreateAccountError
+
 trait UserStore[F[_]] {
-  def create( /* codegen:fields:CREATE_PARAMS */ ): F[User]
-  def get(id: String): F[Option[User]]
-  def update(id: String /* codegen:fields:UPDATE_PARAMS */ ): F[Option[User]]
-  def delete(id: String): F[Boolean]
-  def list(limit: Int, offset: Int): F[(List[User], Long)]
   def ping: F[Boolean]
+
+  /** Creates the account, its access token and the `UserRegistered` outbox row
+    * in one transaction (US-16.1/16.3). A duplicate email writes nothing.
+    */
+  def createAccount(
+      id: String,
+      email: String,
+      passwordHash: String,
+      accessToken: NewToken,
+      outbox: EventEnvelope
+  ): F[Either[CreateAccountError, UserAccount]]
+
+  def findByEmail(email: String): F[Option[StoredAccount]]
+
+  def recordLoginTokens(
+      accessToken: NewToken,
+      refreshToken: NewToken
+  ): F[Unit]
 }
 
 object UserStore {
 
-  // codegen:fields:DEFAULT_VALUE_DECLS
-
   def inMemory[F[_]: Sync]: F[UserStore[F]] =
-    Ref.of[F, Map[String, User]](Map.empty).map { ref =>
-      new UserStore[F] {
-        def create( /* codegen:fields:CREATE_PARAMS */ ): F[User] =
-          for {
-            id <- Sync[F].delay(java.util.UUID.randomUUID().toString)
-            now <- Sync[F].realTimeInstant
-            entity = User(id, /* codegen:fields:CONSTRUCT_ARGS */ now, now)
-            _ <- ref.update(_ + (id -> entity))
-          } yield entity
+    inMemoryWithOutbox[F].map(_._1)
 
-        def get(id: String): F[Option[User]] = ref.get.map(_.get(id))
+  /** In-memory interpreter plus the outbox rows it captured, for tests. */
+  def inMemoryWithOutbox[F[_]: Sync]
+      : F[(UserStore[F], Ref[F, List[(String, EventEnvelope)]])] =
+    for {
+      accounts <- Ref.of[F, Map[String, StoredAccount]](Map.empty)
+      tokens <- Ref.of[F, List[NewToken]](Nil)
+      outbox <- Ref.of[F, List[(String, EventEnvelope)]](Nil)
+    } yield {
+      val store = new UserStore[F] {
+        def ping: F[Boolean] = Sync[F].pure(true)
 
-        def update(
-            id: String
-            /* codegen:fields:UPDATE_PARAMS */
-        ): F[Option[User]] =
-          for {
-            now <- Sync[F].realTimeInstant
-            updated <- ref.modify { entities =>
-              entities.get(id) match {
-                case None           => (entities, None)
-                case Some(existing) =>
-                  val next =
-                    existing.copy(
-                      /* codegen:fields:COPY_ARGS */
-                      updatedAt = now
-                    )
-                  (entities + (id -> next), Some(next))
+        def createAccount(
+            id: String,
+            email: String,
+            passwordHash: String,
+            accessToken: NewToken,
+            envelope: EventEnvelope
+        ): F[Either[CreateAccountError, UserAccount]] =
+          accounts
+            .modify { current =>
+              if (current.values.exists(_.email == email)) {
+                (current, Left(DuplicateEmail))
+              } else {
+                (
+                  current + (id -> StoredAccount(id, email, passwordHash)),
+                  Right(UserAccount(id, email, Instant.now()))
+                )
               }
             }
-          } yield updated
+            .flatMap {
+              case Right(account) =>
+                tokens.update(_ :+ accessToken) *>
+                  outbox.update(_ :+ (id -> envelope)).as(Right(account))
+              case Left(error) => Sync[F].pure(Left(error))
+            }
 
-        def delete(id: String): F[Boolean] =
-          ref.modify { entities =>
-            if (entities.contains(id)) (entities - id, true)
-            else (entities, false)
-          }
+        def findByEmail(email: String): F[Option[StoredAccount]] =
+          accounts.get.map(_.values.find(_.email == email))
 
-        def list(limit: Int, offset: Int): F[(List[User], Long)] =
-          ref.get.map { entities =>
-            val sorted = entities.values.toList
-              .sortBy(_.createdAt)(using Ordering[java.time.Instant].reverse)
-            (sorted.slice(offset, offset + limit), sorted.size.toLong)
-          }
-
-        def ping: F[Boolean] = Sync[F].pure(true)
+        def recordLoginTokens(
+            accessToken: NewToken,
+            refreshToken: NewToken
+        ): F[Unit] =
+          tokens.update(_ :+ accessToken :+ refreshToken)
       }
+      (store, outbox)
     }
 
-  private val insertUser: skunk.Query[
-    (UUID /* codegen:fields:SQL_INSERT_TUPLE_TYPE */ ),
-    (OffsetDateTime, OffsetDateTime)
+  private val insertAccount: skunk.Query[
+    (UUID, String, String),
+    OffsetDateTime
   ] =
     sql"""
-      INSERT INTO "user" (id/* codegen:fields:SQL_INSERT_COLUMNS */)
-      VALUES ($uuid/* codegen:fields:SQL_INSERT_PARAMS */)
-      RETURNING created_at, updated_at
-    """.query(timestamptz *: timestamptz)
+      INSERT INTO "user_account" (id, email, password_hash)
+      VALUES ($uuid, $text, $text)
+      ON CONFLICT (email) DO NOTHING
+      RETURNING created_at
+    """.query(timestamptz)
 
-  private val selectUser: skunk.Query[
-    UUID,
-    ( /* codegen:fields:SQL_SELECT_TUPLE_TYPE */ OffsetDateTime, OffsetDateTime)
+  private val insertToken: skunk.Command[
+    (UUID, UUID, String, String, OffsetDateTime)
   ] =
     sql"""
-      SELECT /* codegen:fields:SQL_SELECT_COLUMNS */created_at, updated_at
-      FROM "user"
-      WHERE id = $uuid
-    """.query( /* codegen:fields:SQL_SELECT_CODEC */ timestamptz *: timestamptz)
+      INSERT INTO "auth_tokens" (id, user_id, token_hash, kind, expires_at)
+      VALUES ($uuid, $uuid, $text, $text, $timestamptz)
+    """.command
 
-  private val updateUser: skunk.Query[
-    ( /* codegen:fields:SQL_UPDATE_TUPLE_TYPE */ UUID),
-    ( /* codegen:fields:SQL_SELECT_TUPLE_TYPE */ OffsetDateTime, OffsetDateTime)
-  ] =
+  private val selectByEmail: skunk.Query[String, (UUID, String, String)] =
     sql"""
-      UPDATE "user"
-      SET /* codegen:fields:SQL_UPDATE_SET */updated_at = now()
-      WHERE id = $uuid
-      RETURNING /* codegen:fields:SQL_SELECT_COLUMNS */created_at, updated_at
-    """.query( /* codegen:fields:SQL_SELECT_CODEC */ timestamptz *: timestamptz)
+      SELECT id, email, password_hash
+      FROM "user_account"
+      WHERE email = $text
+    """.query(uuid *: text *: text)
 
-  private val deleteUser: skunk.Query[UUID, UUID] =
+  private val insertOutboxEvent
+      : skunk.Command[(UUID, String, EventEnvelope, String)] =
     sql"""
-      DELETE FROM "user"
-      WHERE id = $uuid
-      RETURNING id
-    """.query(uuid)
+      INSERT INTO outbox_events (id, aggregate_id, payload, correlation_id)
+      VALUES ($uuid, $text, ${jsonb[EventEnvelope]}, $text)
+    """.command
 
   private val pingQuery: skunk.Query[skunk.Void, Int] = sql"SELECT 1".query(
     int4
   )
-
-  // count(*) OVER() rides along with each row so the page and its total are
-  // read from one consistent query result, not two separate round trips that
-  // could otherwise observe different data if a write lands in between.
-  private val selectUserPage: skunk.Query[
-    (Int, Int),
-    (
-        UUID, /* codegen:fields:SQL_SELECT_TUPLE_TYPE */ OffsetDateTime,
-        OffsetDateTime,
-        Long
-    )
-  ] =
-    sql"""
-      SELECT id, /* codegen:fields:SQL_SELECT_COLUMNS */created_at, updated_at,
-             count(*) OVER() AS total_count
-      FROM "user"
-      ORDER BY created_at DESC
-      LIMIT $int4 OFFSET $int4
-    """.query(
-      uuid *: /* codegen:fields:SQL_SELECT_CODEC */ timestamptz *: timestamptz *: int8
-    )
-
-  // Fallback for when selectUserPage returns zero rows (empty
-  // table, or offset past the end) -- count(*) OVER() has no row to ride along
-  // with in that case, so the total still needs a direct query.
-  private val countUser: skunk.Query[skunk.Void, Long] =
-    sql"""SELECT count(*) FROM "user"""".query(int8)
 
   def postgres[F[_]: Async: Console: Network](
       config: PostgresConfig,
@@ -172,12 +165,6 @@ object UserStore {
           .withUnit("s")
           .create
           .map { histogram =>
-            /** Times a Skunk query, recording a `db.client.operation.duration`
-              * measurement tagged with `db.system`/`db.operation` (OTel
-              * semantic-convention names), plus `error.type` if it fails - this
-              * is this service's only Postgres consumer, so it's instrumented
-              * directly here rather than via a new purerest combinator.
-              */
             def timed[A](operation: String)(fa: F[A]): F[A] =
               for {
                 start <- Async[F].monotonic
@@ -198,146 +185,94 @@ object UserStore {
                 a <- result.liftTo[F]
               } yield a
 
-            new UserStore[F] {
-              def create( /* codegen:fields:CREATE_PARAMS */ ): F[User] =
-                for {
-                  id <- Sync[F].delay(UUID.randomUUID())
-                  timestamps <- timed("insert") {
-                    pool.use { session =>
-                      session
-                        .prepare(insertUser)
-                        .flatMap(
-                          _.unique(
-                            (id /* codegen:fields:SQL_INSERT_TUPLE_ARGS */ )
-                          )
-                        )
-                    }
-                  }
-                } yield {
-                  val (createdAt, updatedAt) = timestamps
-                  User(
-                    id.toString,
-                    /* codegen:fields:CONSTRUCT_ARGS */
-                    createdAt.toInstant,
-                    updatedAt.toInstant
+            def storeToken(session: Session[F], token: NewToken): F[Unit] =
+              for {
+                tokenId <- Sync[F].delay(UUID.fromString(token.id))
+                userId <- Sync[F].delay(UUID.fromString(token.userId))
+                expiresAt = token.expiresAt.atOffset(java.time.ZoneOffset.UTC)
+                _ <- session
+                  .prepare(insertToken)
+                  .flatMap(
+                    _.execute(
+                      (tokenId, userId, token.hash, token.kind, expiresAt)
+                    )
                   )
-                }
+              } yield ()
 
-              def get(id: String): F[Option[User]] =
-                scala.util.Try(UUID.fromString(id)).toOption match {
-                  case None       => Sync[F].pure(None)
-                  case Some(uuid) =>
-                    for {
-                      row <- timed("select") {
-                        pool.use { session =>
-                          session.prepare(selectUser).flatMap(_.option(uuid))
-                        }
-                      }
-                    } yield row.map {
-                      case (
-                            /* codegen:fields:SQL_SELECT_PATTERN_VARS */ createdAt,
-                            updatedAt
-                          ) =>
-                        User(
-                          id,
-                          /* codegen:fields:SQL_SELECT_CONSTRUCT_ARGS */
-                          createdAt.toInstant,
-                          updatedAt.toInstant
-                        )
-                    }
-                }
+            new UserStore[F] {
+              def ping: F[Boolean] =
+                timed("ping")(pool.use(_.unique(pingQuery))).attempt
+                  .map(_.isRight)
 
-              def update(
-                  id: String
-                  /* codegen:fields:UPDATE_PARAMS */
-              ): F[Option[User]] =
-                scala.util.Try(UUID.fromString(id)).toOption match {
-                  case None       => Sync[F].pure(None)
-                  case Some(uuid) =>
-                    for {
-                      row <- timed("update") {
-                        pool.use { session =>
-                          session
-                            .prepare(updateUser)
-                            .flatMap(
-                              _.option(
-                                ( /* codegen:fields:SQL_UPDATE_TUPLE_ARGS */ uuid)
-                              )
+              def createAccount(
+                  id: String,
+                  email: String,
+                  passwordHash: String,
+                  accessToken: NewToken,
+                  envelope: EventEnvelope
+              ): F[Either[CreateAccountError, UserAccount]] =
+                timed("insert") {
+                  pool.use { session =>
+                    session.transaction.use { _ =>
+                      for {
+                        accountId <- Sync[F].delay(UUID.fromString(id))
+                        createdAt <- session
+                          .prepare(insertAccount)
+                          .flatMap(
+                            _.option((accountId, email, passwordHash))
+                          )
+                        result <- createdAt match {
+                          case None     => Sync[F].pure(Left(DuplicateEmail))
+                          case Some(at) =>
+                            for {
+                              _ <- storeToken(session, accessToken)
+                              outboxId <- Sync[F].delay(UUID.randomUUID())
+                              _ <- session
+                                .prepare(insertOutboxEvent)
+                                .flatMap(
+                                  _.execute(
+                                    (
+                                      outboxId,
+                                      id,
+                                      envelope,
+                                      envelope.correlationId
+                                    )
+                                  )
+                                )
+                            } yield Right(
+                              UserAccount(id, email, at.toInstant)
                             )
                         }
-                      }
-                    } yield row.map {
-                      case (
-                            /* codegen:fields:SQL_SELECT_PATTERN_VARS */ createdAt,
-                            updatedAt
-                          ) =>
-                        User(
-                          id,
-                          /* codegen:fields:SQL_SELECT_CONSTRUCT_ARGS */
-                          createdAt.toInstant,
-                          updatedAt.toInstant
-                        )
-                    }
-                }
-
-              def delete(id: String): F[Boolean] =
-                scala.util.Try(UUID.fromString(id)).toOption match {
-                  case None       => Sync[F].pure(false)
-                  case Some(uuid) =>
-                    timed("delete") {
-                      pool.use { session =>
-                        session
-                          .prepare(deleteUser)
-                          .flatMap(_.option(uuid))
-                          .map(_.isDefined)
-                      }
-                    }
-                }
-
-              def list(
-                  limit: Int,
-                  offset: Int
-              ): F[(List[User], Long)] =
-                for {
-                  rows <- timed("list") {
-                    pool.use { session =>
-                      session
-                        .prepare(selectUserPage)
-                        .flatMap(_.stream((limit, offset), 1024).compile.toList)
+                      } yield result
                     }
                   }
-                  total <- rows.headOption match {
-                    case Some(row) =>
-                      // The row's last element is always count(*) OVER()'s
-                      // total_count; using productElement keeps this working
-                      // regardless of how many field-spec columns precede it.
-                      Sync[F].pure(
-                        row
-                          .productElement(row.productArity - 1)
-                          .asInstanceOf[Long]
-                      )
-                    case None =>
-                      timed("count") { pool.use(_.unique(countUser)) }
-                  }
-                } yield rows.map {
-                  case (
-                        id,
-                        /* codegen:fields:SQL_SELECT_PATTERN_VARS */ createdAt,
-                        updatedAt,
-                        _
-                      ) =>
-                    User(
-                      id.toString,
-                      /* codegen:fields:SQL_SELECT_CONSTRUCT_ARGS */
-                      createdAt.toInstant,
-                      updatedAt.toInstant
-                    )
-                } -> total
+                }
 
-              def ping: F[Boolean] =
-                timed("ping") {
-                  pool.use(_.unique(pingQuery))
-                }.attempt.map(_.isRight)
+              def findByEmail(
+                  email: String
+              ): F[Option[StoredAccount]] =
+                timed("select") {
+                  pool.use { session =>
+                    session
+                      .prepare(selectByEmail)
+                      .flatMap(_.option(email))
+                  }
+                }.map(_.map { case (id, storedEmail, passwordHash) =>
+                  StoredAccount(id.toString, storedEmail, passwordHash)
+                })
+
+              def recordLoginTokens(
+                  accessToken: NewToken,
+                  refreshToken: NewToken
+              ): F[Unit] =
+                timed("insert") {
+                  pool.use { session =>
+                    session.transaction.use { _ =>
+                      storeToken(session, accessToken) *>
+                        storeToken(session, refreshToken)
+                    }
+                  }
+                }
             }
           }
       }

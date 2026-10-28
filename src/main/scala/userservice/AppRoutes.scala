@@ -27,6 +27,7 @@ object AppRoutes {
   def all[F[_]: Async](
       store: UserStore[F],
       telemetry: Telemetry[F],
+      auth: AuthConfig,
       channels: List[AsyncApiChannel[?]],
       staticAsyncApiDocsDir: String =
         sys.env.getOrElse("ASYNCAPI_HTML_DIR", "target/asyncapi-docs")
@@ -39,25 +40,16 @@ object AppRoutes {
       "User Service",
       "1.0",
       List(
-        UserRoutes.serverEndpoint[F](store, telemetry.logger),
-        UserRoutes.getUserServerEndpoint[F](
+        AuthRoutes.signupServerEndpoint[F](
           store,
+          PasswordHasher(auth.iterations),
+          TokenIssuer(auth.accessTokenTtl, auth.refreshTokenTtl),
           telemetry.logger
         ),
-        UserRoutes.updateUserServerEndpoint[F](
+        AuthRoutes.loginServerEndpoint[F](
           store,
-          telemetry.logger
-        ),
-        UserRoutes.replaceUserServerEndpoint[F](
-          store,
-          telemetry.logger
-        ),
-        UserRoutes.deleteUserServerEndpoint[F](
-          store,
-          telemetry.logger
-        ),
-        UserRoutes.listUsersServerEndpoint[F](
-          store,
+          PasswordHasher(auth.iterations),
+          TokenIssuer(auth.accessTokenTtl, auth.refreshTokenTtl),
           telemetry.logger
         ),
         HealthRoutes.healthServerEndpoint[F],

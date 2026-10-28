@@ -15,7 +15,7 @@ class MigrationsSuite extends CatsEffectSuite with TestContainerForAll {
       DockerImageName.parse("postgres:16-alpine")
     )
 
-  test("running migrations creates the user table") {
+  test("running migrations creates the user_account and auth_tokens tables") {
     withContainers { postgres =>
       val config = PostgresConfig(
         host = postgres.host,
@@ -35,7 +35,7 @@ class MigrationsSuite extends CatsEffectSuite with TestContainerForAll {
           val rs = conn
             .createStatement()
             .executeQuery(
-              "select column_name, data_type from information_schema.columns where table_name = 'user' order by ordinal_position"
+              "select column_name, data_type from information_schema.columns where table_name = 'user_account' order by ordinal_position"
             )
           val columns = Iterator
             .unfold(())(_ =>
@@ -44,12 +44,24 @@ class MigrationsSuite extends CatsEffectSuite with TestContainerForAll {
             .toList
           assertEquals(
             columns,
-            List(
-              "id",
-              // codegen:fields:TEST_MIGRATION_COLUMN
-              "created_at",
-              "updated_at"
+            List("id", "email", "password_hash", "created_at")
+          )
+
+          val tokenRs = conn
+            .createStatement()
+            .executeQuery(
+              "select column_name from information_schema.columns where table_name = 'auth_tokens' order by ordinal_position"
             )
+          val tokenColumns = Iterator
+            .unfold(())(_ =>
+              if (tokenRs.next())
+                Some((tokenRs.getString("column_name"), ()))
+              else None
+            )
+            .toList
+          assertEquals(
+            tokenColumns,
+            List("id", "user_id", "token_hash", "kind", "expires_at", "created_at")
           )
         } finally conn.close()
       }

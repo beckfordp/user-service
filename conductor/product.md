@@ -21,8 +21,10 @@ the generated CRUD surface is not an intended public API.
 - **User account** — `id`, unique normalized `email`, password hash (never
   the plaintext), `createdAt`.
 - **Auth token** — issued on signup/login; `login` also returns a
-  `refreshToken` per the system-design contract. Token mechanism and
-  password hashing are decided in the US-16 track and recorded there/here.
+  `refreshToken`. Opaque random tokens (32 bytes), stored only as SHA-256
+  hashes in `auth_tokens`; access TTL 1 hour, refresh TTL 30 days. Passwords
+  are PBKDF2-HMAC-SHA256 hashes (per-user salt, 210k iterations by default),
+  never stored or logged in plaintext.
 - `POST /auth/signup` and `POST /auth/login` are the only public auth
   contracts for now (see `gluon/docs/system-design.md`).
 

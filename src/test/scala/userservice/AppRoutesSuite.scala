@@ -9,8 +9,8 @@ import org.typelevel.log4cats.noop.NoOpLogger
 import purerest.metrics.Metrics
 import purerest.tracing.Tracing
 
-import userservice.examples.ExampleAsyncApiChannels
 
+import scala.concurrent.duration._
 import scala.jdk.CollectionConverters._
 
 class AppRoutesSuite extends CatsEffectSuite {
@@ -49,7 +49,8 @@ class AppRoutesSuite extends CatsEffectSuite {
       } yield AppRoutes.all[IO](
         store,
         Telemetry(testTracer.tracer, testMeter.meter, NoOpLogger[IO]),
-        ExampleAsyncApiChannels.channels,
+        AuthConfig(1.hour, 30.days, 1000),
+        AsyncApiChannels.channels,
         staticAsyncApiDocsDir = fixtureDir.toString
       )).use(f)
     }
@@ -74,7 +75,7 @@ class AppRoutesSuite extends CatsEffectSuite {
       } yield {
         assertEquals(response.status, Status.Ok)
         assert(
-          body.contains("ExampleEvent"),
+          body.contains("UserRegistered"),
           s"expected the registered channel's eventType in the AsyncAPI doc, got: $body"
         )
       }
@@ -97,14 +98,12 @@ class AppRoutesSuite extends CatsEffectSuite {
     }
   }
 
-  test("POST /users resolves and creates an entity end-to-end") {
-    val createRequest =
-      CreateUserRequest(/* codegen:fields:TEST_CREATE_REQUEST_ARGS */)
+  test("POST /auth/signup resolves and creates an account end-to-end") {
     withRoutes { routes =>
       routes.orNotFound
         .run(
-          Request[IO](Method.POST, uri"/users")
-            .withEntity(createRequest)
+          Request[IO](Method.POST, uri"/auth/signup")
+            .withEntity(SignupRequest("ada@example.com", "correct horse"))
         )
         .map(response => assertEquals(response.status, Status.Created))
     }

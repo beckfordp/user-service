@@ -26,10 +26,12 @@
 - One Postgres database (`user`); no reads/writes of another service's DB.
 
 ## Auth
-- Password hashing and token format are decided in the US-16 track
-  (`authorize-*/US-16` decisions) and recorded in `product.md` + track plan.
-  Constraints: passwords never stored or logged in plaintext; login errors
-  do not reveal whether the email exists; tokens are opaque to clients.
+- PBKDF2-HMAC-SHA256 (`PasswordHasher`, JDK only) with a per-user random salt
+  and configurable iterations (default 210k). Stored form
+  `pbkdf2$iters$salt$hash`.
+- Opaque random tokens (`TokenIssuer`, 32 bytes base64url) — raw value
+  returned once, only its SHA-256 hash stored in `auth_tokens`. Access TTL 1h,
+  refresh 30d (`auth` config block). No refresh endpoint yet.
 
 ## Messaging
 - fs2-kafka 3.6.0 and purekafka 0.3.0 — used for the transactional-outbox

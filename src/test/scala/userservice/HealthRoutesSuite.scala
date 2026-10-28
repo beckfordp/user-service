@@ -7,45 +7,34 @@ import org.http4s.{Method, Request, Status}
 
 class HealthRoutesSuite extends CatsEffectSuite {
 
-  private val readyStore: UserStore[IO] =
+  private def store(ready: Boolean): UserStore[IO] =
     new UserStore[IO] {
-      def create(/* codegen:fields:CREATE_PARAMS */): IO[User] =
+      def ping: IO[Boolean] = IO.pure(ready)
+      def createAccount(
+          id: String,
+          email: String,
+          passwordHash: String,
+          accessToken: NewToken,
+          outbox: EventEnvelope
+      ): IO[Either[CreateAccountError, UserAccount]] =
         IO.raiseError(new NotImplementedError())
-      def get(id: String): IO[Option[User]] = IO.pure(None)
-      def update(
-          id: String
-          /* codegen:fields:UPDATE_PARAMS */
-      ): IO[Option[User]] = IO.pure(None)
-      def delete(id: String): IO[Boolean] = IO.pure(false)
-      def list(limit: Int, offset: Int): IO[(List[User], Long)] =
-        IO.pure((Nil, 0L))
-      def ping: IO[Boolean] = IO.pure(true)
-    }
-
-  private val notReadyStore: UserStore[IO] =
-    new UserStore[IO] {
-      def create(/* codegen:fields:CREATE_PARAMS */): IO[User] =
-        IO.raiseError(new NotImplementedError())
-      def get(id: String): IO[Option[User]] = IO.pure(None)
-      def update(
-          id: String
-          /* codegen:fields:UPDATE_PARAMS */
-      ): IO[Option[User]] = IO.pure(None)
-      def delete(id: String): IO[Boolean] = IO.pure(false)
-      def list(limit: Int, offset: Int): IO[(List[User], Long)] =
-        IO.pure((Nil, 0L))
-      def ping: IO[Boolean] = IO.pure(false)
+      def findByEmail(email: String): IO[Option[StoredAccount]] =
+        IO.pure(None)
+      def recordLoginTokens(
+          accessToken: NewToken,
+          refreshToken: NewToken
+      ): IO[Unit] = IO.unit
     }
 
   test("GET /health returns 200") {
-    val routes = HealthRoutes.routes[IO](readyStore)
+    val routes = HealthRoutes.routes[IO](store(ready = true))
     for {
       response <- routes.orNotFound.run(Request[IO](Method.GET, uri"/health"))
     } yield assertEquals(response.status, Status.Ok)
   }
 
   test("GET /health/ready returns 200 when the store is ready") {
-    val routes = HealthRoutes.routes[IO](readyStore)
+    val routes = HealthRoutes.routes[IO](store(ready = true))
     for {
       response <- routes.orNotFound.run(
         Request[IO](Method.GET, uri"/health/ready")
@@ -54,7 +43,7 @@ class HealthRoutesSuite extends CatsEffectSuite {
   }
 
   test("GET /health/ready returns 503 when the store is not ready") {
-    val routes = HealthRoutes.routes[IO](notReadyStore)
+    val routes = HealthRoutes.routes[IO](store(ready = false))
     for {
       response <- routes.orNotFound.run(
         Request[IO](Method.GET, uri"/health/ready")

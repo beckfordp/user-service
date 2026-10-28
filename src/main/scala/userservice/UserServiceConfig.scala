@@ -5,6 +5,8 @@ import cats.syntax.all._
 import com.comcast.ip4s.Port
 import pureconfig.{ConfigReader, ConfigSource}
 
+import scala.concurrent.duration.FiniteDuration
+
 final case class PostgresConfig(
     host: String,
     port: Int,
@@ -13,11 +15,18 @@ final case class PostgresConfig(
     password: String
 ) derives ConfigReader
 
+final case class AuthConfig(
+    accessTokenTtl: FiniteDuration,
+    refreshTokenTtl: FiniteDuration,
+    iterations: Int
+) derives ConfigReader
+
 final case class UserServiceConfig(
     port: Int,
     metricsPort: Int,
     serviceName: String,
-    postgres: PostgresConfig
+    postgres: PostgresConfig,
+    auth: AuthConfig
 ) derives ConfigReader
 
 object UserServiceConfig {

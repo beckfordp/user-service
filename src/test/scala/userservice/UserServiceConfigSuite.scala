@@ -4,6 +4,8 @@ import cats.effect.IO
 import munit.CatsEffectSuite
 import pureconfig.ConfigSource
 
+import scala.concurrent.duration._
+
 class UserServiceConfigSuite extends CatsEffectSuite {
 
   private val validHocon =
@@ -17,6 +19,11 @@ class UserServiceConfigSuite extends CatsEffectSuite {
       |  database = "user"
       |  user = "user"
       |  password = "user"
+      |}
+      |auth {
+      |  access-token-ttl = 1h
+      |  refresh-token-ttl = 30d
+      |  iterations = 210000
       |}
       |""".stripMargin
 
@@ -36,6 +43,11 @@ class UserServiceConfigSuite extends CatsEffectSuite {
             database = "user",
             user = "user",
             password = "user"
+          ),
+          auth = AuthConfig(
+            accessTokenTtl = 1.hour,
+            refreshTokenTtl = 30.days,
+            iterations = 210000
           )
         )
       )
@@ -76,6 +88,14 @@ class UserServiceConfigSuite extends CatsEffectSuite {
           "user",
           "user",
           "user"
+        )
+      )
+      assertEquals(
+        config.auth,
+        AuthConfig(
+          accessTokenTtl = 1.hour,
+          refreshTokenTtl = 30.days,
+          iterations = 210000
         )
       )
     }
