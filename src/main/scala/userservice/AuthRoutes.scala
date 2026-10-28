@@ -33,7 +33,11 @@ object SignupResponse {
   implicit val codec: Codec[SignupResponse] = deriveCodec
 }
 
-final case class LoginResponse(token: String, refreshToken: String)
+final case class LoginResponse(
+    userId: String,
+    token: String,
+    refreshToken: String
+)
 
 object LoginResponse {
   implicit val codec: Codec[LoginResponse] = deriveCodec
@@ -265,7 +269,13 @@ object AuthRoutes {
                         _ <- logger.info(context + ("user_id" -> account.id))(
                           "Login succeeded"
                         )
-                      } yield Right(LoginResponse(access.value, refresh.value))
+                      } yield Right(
+                        LoginResponse(
+                          account.id,
+                          access.value,
+                          refresh.value
+                        )
+                      )
                   }
             }
         }

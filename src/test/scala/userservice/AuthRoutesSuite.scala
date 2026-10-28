@@ -103,11 +103,13 @@ class AuthRoutesSuite extends CatsEffectSuite {
   test("login returns 200 {token, refreshToken} for the right password") {
     for {
       f <- fixture
-      _ <- f.signup("ada@example.com", "correct horse")
+      signup <- f.signup("ada@example.com", "correct horse")
+      signupBody <- signup.as[SignupResponse]
       response <- f.login("ada@example.com", "correct horse")
       body <- response.as[LoginResponse]
     } yield {
       assertEquals(response.status, Status.Ok)
+      assertEquals(body.userId, signupBody.userId)
       assert(body.token.nonEmpty)
       assert(body.refreshToken.nonEmpty)
       assertNotEquals(body.token, body.refreshToken)

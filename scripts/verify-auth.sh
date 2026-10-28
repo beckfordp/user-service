@@ -99,7 +99,9 @@ STATUS="$(post_json "$USER_URL/auth/login" \
 [ "$STATUS" = "200" ] || { echo "FAIL: login -> $STATUS" >&2; cat "$TMP_DIR/login.json" >&2; exit 1; }
 LOGIN_TOKEN="$(json_field '["token"]' "$TMP_DIR/login.json")"
 REFRESH_TOKEN="$(json_field '["refreshToken"]' "$TMP_DIR/login.json")"
+LOGIN_USER_ID="$(json_field '["userId"]' "$TMP_DIR/login.json")"
 [ -n "$LOGIN_TOKEN" ] && [ -n "$REFRESH_TOKEN" ] || { echo "FAIL: login tokens missing" >&2; exit 1; }
+[ "$LOGIN_USER_ID" = "$USER_ID" ] || { echo "FAIL: login userId $LOGIN_USER_ID != signup $USER_ID" >&2; exit 1; }
 LOGIN_TOKENS="$(psql_scalar "select count(*) from auth_tokens where user_id = '$USER_ID'")"
 [ "$LOGIN_TOKENS" = "3" ] || { echo "FAIL: expected 3 tokens after login, got $LOGIN_TOKENS" >&2; exit 1; }
 echo "   200; 3 tokens stored"
