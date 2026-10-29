@@ -13,6 +13,7 @@ class UserServiceConfigSuite extends CatsEffectSuite {
       |port = 8080
       |metrics-port = 9090
       |service-name = "user-service"
+      |async-api-html-dir = "target/asyncapi-docs"
       |postgres {
       |  host = "localhost"
       |  port = 5432
@@ -37,6 +38,7 @@ class UserServiceConfigSuite extends CatsEffectSuite {
           port = 8080,
           metricsPort = 9090,
           serviceName = "user-service",
+          asyncApiHtmlDir = "target/asyncapi-docs",
           postgres = PostgresConfig(
             host = "localhost",
             port = 5432,
@@ -80,6 +82,7 @@ class UserServiceConfigSuite extends CatsEffectSuite {
       assertEquals(config.port, 8080)
       assertEquals(config.metricsPort, 9090)
       assertEquals(config.serviceName, "user-service")
+      assertEquals(config.asyncApiHtmlDir, "target/asyncapi-docs")
       assertEquals(
         config.postgres,
         PostgresConfig(

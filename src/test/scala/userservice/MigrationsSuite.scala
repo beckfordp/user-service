@@ -61,7 +61,14 @@ class MigrationsSuite extends CatsEffectSuite with TestContainerForAll {
             .toList
           assertEquals(
             tokenColumns,
-            List("id", "user_id", "token_hash", "kind", "expires_at", "created_at")
+            List(
+              "id",
+              "user_id",
+              "token_hash",
+              "kind",
+              "expires_at",
+              "created_at"
+            )
           )
         } finally conn.close()
       }

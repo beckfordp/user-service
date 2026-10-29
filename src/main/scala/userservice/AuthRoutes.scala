@@ -1,6 +1,6 @@
 package userservice
 
-import cats.effect.Async
+import cats.effect.{Async, Sync}
 import cats.syntax.all._
 import io.circe.Codec
 import io.circe.generic.semiauto.deriveCodec
@@ -12,6 +12,8 @@ import sttp.tapir.generic.auto._
 import sttp.tapir.json.circe._
 import sttp.tapir.server.ServerEndpoint
 import sttp.tapir.server.http4s.Http4sServerInterpreter
+
+import userservice.domain.{AccountId, TokenId}
 
 import java.util.UUID
 
@@ -146,7 +148,7 @@ object AuthRoutes {
     else Right(email)
   }
 
-  def signupServerEndpoint[F[_]: Async](
+  def signupServerEndpoint[F[_]: Sync](
       store: UserStore[F],
       hasher: PasswordHasher,
       tokens: TokenIssuer,
@@ -165,16 +167,21 @@ object AuthRoutes {
               .as(Left(error))
           case Right(email) =>
             for {
-              userId <- Async[F].delay(UUID.randomUUID().toString)
+              userId <- Sync[F].delay(
+                AccountId.fromUuid(UUID.randomUUID())
+              )
               passwordHash <- hasher.hash[F](request.password)
               accessToken <- tokens.issue[F](TokenKind.Access)
-              envelope <- AuthEvents.userRegistered[F](userId, email)
+              envelope <- AuthEvents.userRegistered[F](
+                AccountId.render(userId),
+                email
+              )
               created <- store.createAccount(
                 userId,
                 email,
                 passwordHash,
                 NewToken(
-                  UUID.randomUUID().toString,
+                  TokenId.fromUuid(UUID.randomUUID()),
                   userId,
                   accessToken.hash,
                   TokenKind.Access.wire,
@@ -193,12 +200,17 @@ object AuthRoutes {
                     )
                 case Right(account) =>
                   logger
-                    .info(context + ("user_id" -> account.id))(
+                    .info(
+                      context + ("user_id" -> AccountId.render(account.id))
+                    )(
                       "Account created"
                     )
                     .as(
                       Right[AuthError, SignupResponse](
-                        SignupResponse(account.id, accessToken.value)
+                        SignupResponse(
+                          AccountId.render(account.id),
+                          accessToken.value
+                        )
                       )
                     )
               }
@@ -207,7 +219,7 @@ object AuthRoutes {
       } yield result
     }
 
-  def loginServerEndpoint[F[_]: Async](
+  def loginServerEndpoint[F[_]: Sync](
       store: UserStore[F],
       hasher: PasswordHasher,
       tokens: TokenIssuer,
@@ -252,26 +264,28 @@ object AuthRoutes {
                         refresh <- tokens.issue[F](TokenKind.Refresh)
                         _ <- store.recordLoginTokens(
                           NewToken(
-                            UUID.randomUUID().toString,
+                            TokenId.fromUuid(UUID.randomUUID()),
                             account.id,
                             access.hash,
                             TokenKind.Access.wire,
                             access.expiresAt
                           ),
                           NewToken(
-                            UUID.randomUUID().toString,
+                            TokenId.fromUuid(UUID.randomUUID()),
                             account.id,
                             refresh.hash,
                             TokenKind.Refresh.wire,
                             refresh.expiresAt
                           )
                         )
-                        _ <- logger.info(context + ("user_id" -> account.id))(
+                        _ <- logger.info(
+                          context + ("user_id" -> AccountId.render(account.id))
+                        )(
                           "Login succeeded"
                         )
                       } yield Right(
                         LoginResponse(
-                          account.id,
+                          AccountId.render(account.id),
                           access.value,
                           refresh.value
                         )

@@ -5,6 +5,9 @@ import cats.syntax.all._
 import com.dimafeng.testcontainers.PostgreSQLContainer
 import com.dimafeng.testcontainers.munit.TestContainerForAll
 import munit.CatsEffectSuite
+import userservice.domain.{AccountId, TokenId}
+
+import java.util.UUID
 import org.testcontainers.utility.DockerImageName
 import org.typelevel.otel4s.metrics.Meter
 import purerest.metrics.Metrics
@@ -67,26 +70,33 @@ class UserStorePostgresSuite extends CatsEffectSuite with TestContainerForAll {
   )
 
   private def token(
-      id: String,
-      userId: String,
+      id: TokenId,
+      userId: AccountId,
       kind: TokenKind
   ): NewToken =
-    NewToken(id, userId, s"hash-$id", kind.wire, Instant.now().plusSeconds(3600))
+    NewToken(
+      id,
+      userId,
+      s"hash-${TokenId.render(id)}",
+      kind.wire,
+      Instant.now().plusSeconds(3600)
+    )
 
-  private def uniqueId(): String = java.util.UUID.randomUUID().toString
+  private def uniqueId(): AccountId = AccountId.fromUuid(UUID.randomUUID())
+  private def uniqueTokenId(): TokenId = TokenId.fromUuid(UUID.randomUUID())
 
   test("createAccount writes the account, token and outbox row atomically") {
     withContainers { postgres =>
       withStore(postgres) { store =>
         val userId = uniqueId()
-        val tokenId = uniqueId()
+        val tokenId = uniqueTokenId()
         for {
           result <- store.createAccount(
             userId,
             "ada@example.com",
             "pbkdf2$1000$salt$hash",
             token(tokenId, userId, TokenKind.Access),
-            envelope.copy(correlationId = userId)
+            envelope.copy(correlationId = AccountId.render(userId))
           )
           tokens <- query(
             postgres,
@@ -98,7 +108,7 @@ class UserStorePostgresSuite extends CatsEffectSuite with TestContainerForAll {
           )
         } yield {
           assertEquals(result.map(_.id), Right(userId))
-          assertEquals(tokens, List(tokenId))
+          assertEquals(tokens, List(TokenId.render(tokenId)))
           assertEquals(outbox, List("UserRegistered"))
         }
       }
@@ -115,14 +125,14 @@ class UserStorePostgresSuite extends CatsEffectSuite with TestContainerForAll {
             firstUser,
             "dup@example.com",
             "hash-a",
-            token(uniqueId(), firstUser, TokenKind.Access),
+            token(uniqueTokenId(), firstUser, TokenKind.Access),
             envelope
           )
           duplicate <- store.createAccount(
             secondUser,
             "dup@example.com",
             "hash-b",
-            token(uniqueId(), secondUser, TokenKind.Access),
+            token(uniqueTokenId(), secondUser, TokenKind.Access),
             envelope
           )
           users <- query(
@@ -146,7 +156,7 @@ class UserStorePostgresSuite extends CatsEffectSuite with TestContainerForAll {
             userId,
             "lookup@example.com",
             "stored-hash",
-            token(uniqueId(), userId, TokenKind.Access),
+            token(uniqueTokenId(), userId, TokenKind.Access),
             envelope
           )
           found <- store.findByEmail("lookup@example.com")
@@ -163,14 +173,14 @@ class UserStorePostgresSuite extends CatsEffectSuite with TestContainerForAll {
     withContainers { postgres =>
       withStore(postgres) { store =>
         val userId = uniqueId()
-        val accessId = uniqueId()
-        val refreshId = uniqueId()
+        val accessId = uniqueTokenId()
+        val refreshId = uniqueTokenId()
         for {
           _ <- store.createAccount(
             userId,
             "login@example.com",
             "hash",
-            token(uniqueId(), userId, TokenKind.Access),
+            token(uniqueTokenId(), userId, TokenKind.Access),
             envelope
           )
           _ <- store.recordLoginTokens(
@@ -210,7 +220,7 @@ class UserStorePostgresSuite extends CatsEffectSuite with TestContainerForAll {
               userId,
               "rollback@example.com",
               "hash",
-              token(uniqueId(), userId, TokenKind.Access),
+              token(uniqueTokenId(), userId, TokenKind.Access),
               envelope
             )
             .attempt

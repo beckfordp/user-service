@@ -2,10 +2,16 @@ package userservice
 
 import cats.effect.IO
 import munit.CatsEffectSuite
+import userservice.domain.{AccountId, TokenId}
 
 import java.time.Instant
+import java.util.UUID
 
 class UserStoreSuite extends CatsEffectSuite {
+
+  private val accountId = AccountId.fromUuid(UUID.randomUUID())
+  private val accountId2 = AccountId.fromUuid(UUID.randomUUID())
+  private def newTokenId(): TokenId = TokenId.fromUuid(UUID.randomUUID())
 
   private val envelope = EventEnvelope(
     eventId = "event-1",
@@ -20,29 +26,35 @@ class UserStoreSuite extends CatsEffectSuite {
   )
 
   private def token(
-      id: String,
-      userId: String,
+      id: TokenId,
+      userId: AccountId,
       kind: TokenKind,
       expiresAt: Instant = Instant.parse("2026-10-28T13:00:00Z")
   ): NewToken =
-    NewToken(id, userId, s"hash-$id", kind.wire, expiresAt)
+    NewToken(
+      id,
+      userId,
+      s"hash-${TokenId.render(id)}",
+      kind.wire,
+      expiresAt
+    )
 
   test("createAccount stores the account and its access token") {
     for {
       (store, outbox) <- UserStore.inMemoryWithOutbox[IO]
       result <- store.createAccount(
-        "user-1",
+        accountId,
         "ada@example.com",
         "pbkdf2$1000$salt$hash",
-        token("token-1", "user-1", TokenKind.Access),
+        token(newTokenId(), accountId, TokenKind.Access),
         envelope
       )
       found <- store.findByEmail("ada@example.com")
       events <- outbox.get
     } yield {
-      assertEquals(result.map(_.id), Right("user-1"))
+      assertEquals(result.map(_.id), Right(accountId))
       assertEquals(found.map(_.email), Some("ada@example.com"))
-      assertEquals(events.map(_._1), List("user-1"))
+      assertEquals(events.map(_._1), List(AccountId.render(accountId)))
       assertEquals(events.map(_._2.eventType), List("UserRegistered"))
     }
   }
@@ -51,17 +63,17 @@ class UserStoreSuite extends CatsEffectSuite {
     for {
       (store, outbox) <- UserStore.inMemoryWithOutbox[IO]
       _ <- store.createAccount(
-        "user-1",
+        accountId,
         "ada@example.com",
         "hash-a",
-        token("token-1", "user-1", TokenKind.Access),
+        token(newTokenId(), accountId, TokenKind.Access),
         envelope
       )
       duplicate <- store.createAccount(
-        "user-2",
+        accountId2,
         "ada@example.com",
         "hash-b",
-        token("token-2", "user-2", TokenKind.Access),
+        token(newTokenId(), accountId2, TokenKind.Access),
         envelope
       )
       events <- outbox.get
@@ -75,10 +87,10 @@ class UserStoreSuite extends CatsEffectSuite {
     for {
       store <- UserStore.inMemory[IO]
       _ <- store.createAccount(
-        "user-1",
+        accountId,
         "ada@example.com",
         "stored-hash",
-        token("token-1", "user-1", TokenKind.Access),
+        token(newTokenId(), accountId, TokenKind.Access),
         envelope
       )
       found <- store.findByEmail("ada@example.com")
@@ -93,15 +105,15 @@ class UserStoreSuite extends CatsEffectSuite {
     for {
       store <- UserStore.inMemory[IO]
       _ <- store.createAccount(
-        "user-1",
+        accountId,
         "ada@example.com",
         "hash",
-        token("token-1", "user-1", TokenKind.Access),
+        token(newTokenId(), accountId, TokenKind.Access),
         envelope
       )
       result <- store.recordLoginTokens(
-        token("token-2", "user-1", TokenKind.Access),
-        token("token-3", "user-1", TokenKind.Refresh)
+        token(newTokenId(), accountId, TokenKind.Access),
+        token(newTokenId(), accountId, TokenKind.Refresh)
       )
     } yield assertEquals(result, ())
   }

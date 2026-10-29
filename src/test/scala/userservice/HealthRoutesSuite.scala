@@ -2,6 +2,7 @@ package userservice
 
 import cats.effect.IO
 import munit.CatsEffectSuite
+import userservice.domain.AccountId
 import org.http4s.implicits._
 import org.http4s.{Method, Request, Status}
 
@@ -11,7 +12,7 @@ class HealthRoutesSuite extends CatsEffectSuite {
     new UserStore[IO] {
       def ping: IO[Boolean] = IO.pure(ready)
       def createAccount(
-          id: String,
+          id: AccountId,
           email: String,
           passwordHash: String,
           accessToken: NewToken,

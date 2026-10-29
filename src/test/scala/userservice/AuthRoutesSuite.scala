@@ -39,7 +39,9 @@ class AuthRoutesSuite extends CatsEffectSuite {
       .inMemoryWithOutbox[IO]
       .map { case (store, outbox) => Fixture(store, outbox) }
 
-  test("signup returns 201 {userId, token} and writes the UserRegistered event") {
+  test(
+    "signup returns 201 {userId, token} and writes the UserRegistered event"
+  ) {
     for {
       f <- fixture
       response <- f.signup("  Ada@Example.COM ", "correct horse")
@@ -116,7 +118,9 @@ class AuthRoutesSuite extends CatsEffectSuite {
     }
   }
 
-  test("login returns the same generic 401 for an unknown email and wrong password") {
+  test(
+    "login returns the same generic 401 for an unknown email and wrong password"
+  ) {
     for {
       f <- fixture
       _ <- f.signup("ada@example.com", "correct horse")

@@ -9,7 +9,6 @@ import org.typelevel.log4cats.noop.NoOpLogger
 import purerest.metrics.Metrics
 import purerest.tracing.Tracing
 
-
 import scala.concurrent.duration._
 import scala.jdk.CollectionConverters._
 

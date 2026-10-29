@@ -25,6 +25,7 @@ final case class UserServiceConfig(
     port: Int,
     metricsPort: Int,
     serviceName: String,
+    asyncApiHtmlDir: String,
     postgres: PostgresConfig,
     auth: AuthConfig
 ) derives ConfigReader

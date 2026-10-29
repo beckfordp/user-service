@@ -3,6 +3,7 @@ package userservice
 import cats.effect.{Async, Ref, Resource, Sync}
 import cats.effect.std.Console
 import cats.syntax.all._
+import userservice.domain.{AccountId, TokenId}
 import fs2.io.net.Network
 import io.circe.syntax._
 import org.typelevel.otel4s.Attribute
@@ -16,15 +17,23 @@ import java.time.{Instant, OffsetDateTime}
 import java.util.UUID
 import scala.concurrent.duration.SECONDS
 
-final case class UserAccount(id: String, email: String, createdAt: Instant)
+final case class UserAccount(
+    id: AccountId,
+    email: String,
+    createdAt: Instant
+)
 
 /** Internal lookup row for login: carries the stored password hash. */
-final case class StoredAccount(id: String, email: String, passwordHash: String)
+final case class StoredAccount(
+    id: AccountId,
+    email: String,
+    passwordHash: String
+)
 
 /** A token about to be persisted; its raw value never reaches the store. */
 final case class NewToken(
-    id: String,
-    userId: String,
+    id: TokenId,
+    userId: AccountId,
     hash: String,
     kind: String,
     expiresAt: Instant
@@ -41,7 +50,7 @@ trait UserStore[F[_]] {
     * in one transaction (US-16.1/16.3). A duplicate email writes nothing.
     */
   def createAccount(
-      id: String,
+      id: AccountId,
       email: String,
       passwordHash: String,
       accessToken: NewToken,
@@ -65,7 +74,7 @@ object UserStore {
   def inMemoryWithOutbox[F[_]: Sync]
       : F[(UserStore[F], Ref[F, List[(String, EventEnvelope)]])] =
     for {
-      accounts <- Ref.of[F, Map[String, StoredAccount]](Map.empty)
+      accounts <- Ref.of[F, Map[AccountId, StoredAccount]](Map.empty)
       tokens <- Ref.of[F, List[NewToken]](Nil)
       outbox <- Ref.of[F, List[(String, EventEnvelope)]](Nil)
     } yield {
@@ -73,7 +82,7 @@ object UserStore {
         def ping: F[Boolean] = Sync[F].pure(true)
 
         def createAccount(
-            id: String,
+            id: AccountId,
             email: String,
             passwordHash: String,
             accessToken: NewToken,
@@ -93,7 +102,9 @@ object UserStore {
             .flatMap {
               case Right(account) =>
                 tokens.update(_ :+ accessToken) *>
-                  outbox.update(_ :+ (id -> envelope)).as(Right(account))
+                  outbox
+                    .update(_ :+ (AccountId.render(id) -> envelope))
+                    .as(Right(account))
               case Left(error) => Sync[F].pure(Left(error))
             }
 
@@ -187,8 +198,8 @@ object UserStore {
 
             def storeToken(session: Session[F], token: NewToken): F[Unit] =
               for {
-                tokenId <- Sync[F].delay(UUID.fromString(token.id))
-                userId <- Sync[F].delay(UUID.fromString(token.userId))
+                tokenId = TokenId.uuid(token.id)
+                userId = AccountId.uuid(token.userId)
                 expiresAt = token.expiresAt.atOffset(java.time.ZoneOffset.UTC)
                 _ <- session
                   .prepare(insertToken)
@@ -205,7 +216,7 @@ object UserStore {
                   .map(_.isRight)
 
               def createAccount(
-                  id: String,
+                  id: AccountId,
                   email: String,
                   passwordHash: String,
                   accessToken: NewToken,
@@ -215,7 +226,7 @@ object UserStore {
                   pool.use { session =>
                     session.transaction.use { _ =>
                       for {
-                        accountId <- Sync[F].delay(UUID.fromString(id))
+                        accountId = AccountId.uuid(id)
                         createdAt <- session
                           .prepare(insertAccount)
                           .flatMap(
@@ -233,7 +244,7 @@ object UserStore {
                                   _.execute(
                                     (
                                       outboxId,
-                                      id,
+                                      AccountId.render(id),
                                       envelope,
                                       envelope.correlationId
                                     )
@@ -258,7 +269,11 @@ object UserStore {
                       .flatMap(_.option(email))
                   }
                 }.map(_.map { case (id, storedEmail, passwordHash) =>
-                  StoredAccount(id.toString, storedEmail, passwordHash)
+                  StoredAccount(
+                    AccountId.fromUuid(id),
+                    storedEmail,
+                    passwordHash
+                  )
                 })
 
               def recordLoginTokens(
