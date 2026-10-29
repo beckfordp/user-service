@@ -2,7 +2,7 @@
 
 This file tracks all major tracks for the project.
 
-- [ ] **Track: TD-15.7 — Cross-repo consistency hardening (user-service)**
+- [x] **Track: TD-15.7 — Cross-repo consistency hardening (user-service)**
   *Link: [./tracks/td15-user-hardening_20261029/](./tracks/td15-user-hardening_20261029/)*
 
 ---
