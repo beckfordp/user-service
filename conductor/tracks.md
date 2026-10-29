@@ -2,6 +2,9 @@
 
 This file tracks all major tracks for the project.
 
+- [ ] **Track: TD-15.7 — Cross-repo consistency hardening (user-service)**
+  *Link: [./tracks/td15-user-hardening_20261029/](./tracks/td15-user-hardening_20261029/)*
+
 ---
 
 ## Backlog
@@ -11,7 +14,6 @@ folder), so `/conductor:implement` cannot pick these up by accident. Reorder fre
 priorities change. When ready to work on one, run `/conductor:newTrack <title>` to go
 through the spec/plan questions and promote it into a real track above.
 
-- TD-15.7 — cross-repo consistency hardening: typed account/user/token ids, ScalaCheck, narrower constraints (see `gluon/TECHNICAL_DEBT.md` TD-15)
 
 
 ---
