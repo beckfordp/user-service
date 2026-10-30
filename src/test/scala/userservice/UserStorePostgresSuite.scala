@@ -10,7 +10,9 @@ import userservice.domain.{AccountId, TokenId}
 import java.util.UUID
 import org.testcontainers.utility.DockerImageName
 import org.typelevel.otel4s.metrics.Meter
-import purerest.metrics.Metrics
+import purerest.metrics.{LatencyBuckets, Metrics}
+
+import scala.jdk.CollectionConverters._
 
 import java.sql.DriverManager
 import java.time.Instant
@@ -253,6 +255,36 @@ class UserStorePostgresSuite extends CatsEffectSuite with TestContainerForAll {
   test("ping reports the database is reachable") {
     withContainers { postgres =>
       withStore(postgres)(_.ping.map(ready => assert(ready)))
+    }
+  }
+
+  test("db.client.operation.duration uses LatencyBuckets.seconds boundaries") {
+    withContainers { postgres =>
+      Metrics.test[IO]("user-store-buckets-test").use { testMeter =>
+        Migrations.run[IO](configFor(postgres)) *>
+          UserStore
+            .postgres[IO](configFor(postgres), testMeter.meter)
+            .use { store =>
+              for {
+                _ <- store.ping
+                metrics <- testMeter.collectMetrics
+              } yield {
+                val points = metrics
+                  .filter(_.getName == "db.client.operation.duration")
+                  .flatMap(_.getHistogramData.getPoints.asScala)
+                assert(
+                  points.nonEmpty,
+                  s"expected db.client.operation.duration points, got: $metrics"
+                )
+                points.foreach { point =>
+                  assertEquals(
+                    point.getBoundaries.asScala.map(_.doubleValue).toVector,
+                    LatencyBuckets.seconds.boundaries
+                  )
+                }
+              }
+            }
+      }
     }
   }
 }
