@@ -17,6 +17,12 @@
 - purekafka.docs (`AsyncApiChannel`/`Docs`) — AsyncAPI docs for this
   service's Kafka contracts; `schemaRegistryCheck` (sbt-purekafka-docs)
   registers/validates schemas against Apicurio at build/CI time (ADR 0003).
+- Schema registry baseline (gluon TD-18, purekafka 0.5.0 / sbt-purekafka-docs
+  0.5.0-dev): only producer channels register (draft-07, closed, labelled
+  `producer=<service>`, `BACKWARD_TRANSITIVE`); subscribe channels dry-run
+  their mirror. CI restores gluon's `registry/` git export into the throwaway
+  Apicurio first, so the check compares against the real baseline;
+  `scripts/verify-schema-registry-check.sh` does the same locally.
 
 ## Persistence
 - skunk 1.0.0 — pure-FP, non-blocking Postgres access
@@ -34,7 +40,7 @@
   refresh 30d (`auth` config block). No refresh endpoint yet.
 
 ## Messaging
-- fs2-kafka 3.6.0 and purekafka 0.3.0 — used for the transactional-outbox
+- fs2-kafka 3.6.0 and purekafka 0.5.0 — used for the transactional-outbox
   side of `UserRegistered` (ADR 0008/0009/0010); no direct producer calls.
 - Debezium connector for this service's `outbox_events` added to gluon's
   `infra/k8s/local-infra` when the event lands.
