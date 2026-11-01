@@ -1,6 +1,7 @@
 package userservice
 
 import cats.effect.IO
+import cats.syntax.all._
 import munit.CatsEffectSuite
 
 class PasswordHasherSuite extends CatsEffectSuite {
@@ -26,11 +27,14 @@ class PasswordHasherSuite extends CatsEffectSuite {
     for {
       h <- hasher
       stored <- h.hash(password)
-      right <- h.verify(password, stored)
-      wrong <- h.verify(TestValues.password("wrong-horse-battery"), stored)
+      right <- h.verify(password, Some(stored))
+      wrong <- h.verify(
+        TestValues.password("wrong-horse-battery"),
+        Some(stored)
+      )
     } yield {
-      assert(right)
-      assert(!wrong)
+      assertEquals(right, PasswordCheck.Match)
+      assertEquals(wrong, PasswordCheck.Mismatch)
     }
   }
 
@@ -42,14 +46,24 @@ class PasswordHasherSuite extends CatsEffectSuite {
     } yield assertNotEquals(first, second)
   }
 
-  test("verify is false for a malformed stored value") {
+  test("verify reports a malformed stored value as Malformed, not Mismatch") {
     for {
       h <- hasher
-      bad <- h.verify(password, "not-a-hash")
-      empty <- h.verify(password, "")
-    } yield {
-      assert(!bad)
-      assert(!empty)
-    }
+      results <- List(
+        "not-a-hash",
+        "",
+        "pbkdf2$abc$c2FsdA$aGFzaA",
+        "pbkdf2$0$c2FsdA$aGFzaA",
+        "pbkdf2$-5$c2FsdA$aGFzaA",
+        "pbkdf2$1000$not*base64$aGFzaA",
+        "bcrypt$1000$c2FsdA$aGFzaA"
+      ).traverse(stored => h.verify(password, Some(stored)))
+    } yield assertEquals(results.distinct, List(PasswordCheck.Malformed))
+  }
+
+  test("verify against no account runs a dummy check and is a Mismatch") {
+    hasher
+      .flatMap(_.verify(password, None))
+      .map(result => assertEquals(result, PasswordCheck.Mismatch))
   }
 }

@@ -225,6 +225,10 @@ object AuthRoutes {
   ): ServerEndpoint[Any, F] =
     loginEndpoint.serverLogic[F] { request =>
       val context = Map("method" -> "POST", "path" -> "/auth/login")
+      val loginFailed: F[Either[LoginError, LoginResponse]] =
+        logger
+          .warn(context)("Login failed")
+          .as(Left(AuthError.InvalidCredentials))
       for {
         _ <- logger.info(context)("Received request")
         result <- Credentials.parseLogin(
@@ -238,28 +242,29 @@ object AuthRoutes {
               )
               .as(Left(error))
           case Right(credentials) =>
-            store.findByEmail(credentials.email).flatMap {
-              case None =>
-                logger
-                  .warn(context)("Login failed")
-                  .as(
-                    Left[LoginError, LoginResponse](
-                      AuthError.InvalidCredentials
-                    )
-                  )
-              case Some(account) =>
-                hasher
-                  .verify(credentials.password, account.passwordHash)
-                  .flatMap {
-                    case false =>
+            for {
+              account <- store.findByEmail(credentials.email)
+              check <- hasher.verify(
+                credentials.password,
+                account.map(_.passwordHash)
+              )
+              response <- account match {
+                // verify answered Mismatch after a dummy check (no oracle).
+                case None          => loginFailed
+                case Some(account) =>
+                  check match {
+                    case PasswordCheck.Mismatch  => loginFailed
+                    case PasswordCheck.Malformed =>
                       logger
-                        .warn(context)("Login failed")
+                        .error(
+                          context + ("user_id" -> AccountId.render(account.id))
+                        )("Stored password hash is malformed")
                         .as(
                           Left[LoginError, LoginResponse](
                             AuthError.InvalidCredentials
                           )
                         )
-                    case true =>
+                    case PasswordCheck.Match =>
                       for {
                         accessId <- UUIDGen.randomUUID[F].map(TokenId.fromUuid)
                         refreshId <- UUIDGen.randomUUID[F].map(TokenId.fromUuid)
@@ -294,7 +299,8 @@ object AuthRoutes {
                         )
                       )
                   }
-            }
+              }
+            } yield response
         }
       } yield result
     }

@@ -38,13 +38,35 @@ object UserServiceConfig {
     * doesn't have to do that validation itself.
     */
   def loadValidated[F[_]: Sync]: F[(UserServiceConfig, Port)] =
+    load[F].flatMap(config => Sync[F].fromEither(validate(config)))
+
+  /** Startup checks PureConfig's types can't express: a bindable port, a usable
+    * PBKDF2 iteration count (0 or less would fail every signup at runtime) and
+    * positive token TTLs.
+    */
+  def validate(
+      config: UserServiceConfig
+  ): Either[IllegalArgumentException, (UserServiceConfig, Port)] =
     for {
-      config <- load[F]
-      port <- Sync[F].fromOption(
-        Port.fromInt(config.port),
-        new IllegalArgumentException(
-          s"Invalid user-service port: ${config.port}"
+      port <- Port
+        .fromInt(config.port)
+        .toRight(
+          new IllegalArgumentException(
+            s"Invalid user-service port: ${config.port}"
+          )
         )
+      _ <- Either.cond(
+        config.auth.iterations >= 1,
+        (),
+        new IllegalArgumentException(
+          s"auth.iterations must be at least 1, got ${config.auth.iterations}"
+        )
+      )
+      _ <- Either.cond(
+        config.auth.accessTokenTtl.toSeconds > 0 &&
+          config.auth.refreshTokenTtl.toSeconds > 0,
+        (),
+        new IllegalArgumentException("auth token TTLs must be positive")
       )
     } yield (config, port)
 }

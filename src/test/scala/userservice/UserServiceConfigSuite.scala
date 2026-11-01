@@ -103,4 +103,49 @@ class UserServiceConfigSuite extends CatsEffectSuite {
       )
     }
   }
+
+  private def parsed(hocon: String): UserServiceConfig =
+    ConfigSource
+      .string(hocon)
+      .load[UserServiceConfig]
+      .fold(e => fail(e.prettyPrint()), identity)
+
+  test("validate accepts the shipped-shape config and parses the port") {
+    assertEquals(
+      UserServiceConfig.validate(parsed(validHocon)).map(_._2.value),
+      Right(8080)
+    )
+  }
+
+  test("validate rejects a non-positive PBKDF2 iteration count") {
+    List("0", "-1").foreach { n =>
+      val result = UserServiceConfig.validate(
+        parsed(validHocon.replace("iterations = 210000", s"iterations = $n"))
+      )
+      assertEquals(
+        result.left.map(_.getMessage),
+        Left(s"auth.iterations must be at least 1, got $n")
+      )
+    }
+  }
+
+  test("validate rejects a non-positive token TTL") {
+    val result = UserServiceConfig.validate(
+      parsed(
+        validHocon.replace("access-token-ttl = 1h", "access-token-ttl = 0s")
+      )
+    )
+    assertEquals(
+      result.left.map(_.getMessage),
+      Left("auth token TTLs must be positive")
+    )
+  }
+
+  test("validate rejects an out-of-range port") {
+    assert(
+      UserServiceConfig
+        .validate(parsed(validHocon.replace("port = 8080", "port = 70000")))
+        .isLeft
+    )
+  }
 }

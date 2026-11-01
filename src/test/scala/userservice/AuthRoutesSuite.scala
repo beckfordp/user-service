@@ -5,7 +5,10 @@ import munit.CatsEffectSuite
 import org.http4s.circe.CirceEntityCodec._
 import org.http4s.implicits._
 import org.http4s.{HttpRoutes, Method, Request, Response, Status}
+import org.typelevel.log4cats.StructuredLogger
 import org.typelevel.log4cats.noop.NoOpLogger
+import org.typelevel.log4cats.testing.StructuredTestingLogger
+import userservice.domain.{AccountId, Password, TokenId, TokenKind}
 
 import scala.concurrent.duration._
 
@@ -15,10 +18,11 @@ class AuthRoutesSuite extends CatsEffectSuite {
       store: UserStore[IO],
       outbox: cats.effect.Ref[IO, List[(String, EventEnvelope)]],
       hasher: PasswordHasher[IO],
-      tokens: TokenIssuer[IO]
+      tokens: TokenIssuer[IO],
+      logger: StructuredLogger[IO] = NoOpLogger[IO]
   ) {
     val routes: HttpRoutes[IO] =
-      AuthRoutes.routes[IO](store, hasher, tokens, NoOpLogger[IO])
+      AuthRoutes.routes[IO](store, hasher, tokens, logger)
 
     def signup(email: String, password: String): IO[Response[IO]] =
       routes.orNotFound.run(
@@ -145,6 +149,127 @@ class AuthRoutesSuite extends CatsEffectSuite {
     } yield {
       assertEquals(response.status, Status.BadRequest)
       assertEquals(body.error, "Enter a valid email address")
+    }
+  }
+
+  test("login rejects a blank password with 400") {
+    for {
+      f <- fixture
+      response <- f.login("ada@example.com", "")
+      body <- response.as[ErrorResponse]
+    } yield {
+      assertEquals(response.status, Status.BadRequest)
+      assertEquals(body.error, "Enter your password")
+    }
+  }
+
+  test("signup stores a pbkdf2 hash, never the plaintext password") {
+    for {
+      f <- fixture
+      _ <- f.signup("ada@example.com", "correct-horse-battery-staple")
+      stored <- f.store.findByEmail(TestValues.email("ada@example.com"))
+    } yield {
+      val hash = stored.map(_.passwordHash).getOrElse("")
+      assert(clue(hash).startsWith("pbkdf2$"))
+      assert(!hash.contains("correct-horse-battery-staple"))
+    }
+  }
+
+  /** Wraps a hasher, recording which stored values `verify` was asked about. */
+  private def recording(
+      hasher: PasswordHasher[IO]
+  ): IO[(PasswordHasher[IO], IO[List[Option[String]]])] =
+    IO.ref(List.empty[Option[String]]).map { calls =>
+      val wrapped = new PasswordHasher[IO] {
+        def hash(password: Password): IO[String] = hasher.hash(password)
+        def verify(
+            password: Password,
+            stored: Option[String]
+        ): IO[PasswordCheck] =
+          calls.update(_ :+ stored) *> hasher.verify(password, stored)
+      }
+      (wrapped, calls.get)
+    }
+
+  test("an unknown email still costs one password check (no timing oracle)") {
+    for {
+      f <- fixture
+      (hasher, calls) <- recording(f.hasher)
+      response <- f.copy(hasher = hasher).login("nobody@example.com", "x")
+      seen <- calls
+    } yield {
+      assertEquals(response.status, Status.Unauthorized)
+      assertEquals(seen, List(None))
+    }
+  }
+
+  test("a malformed stored hash logs an error and answers the generic 401") {
+    val logger = StructuredTestingLogger.impl[IO]()
+    val userId = AccountId.fromUuid(java.util.UUID.randomUUID())
+    for {
+      f <- fixture
+      _ <- f.store.createAccount(
+        userId,
+        TestValues.email("ada@example.com"),
+        "corrupt-row",
+        NewToken(
+          TokenId.fromUuid(java.util.UUID.randomUUID()),
+          userId,
+          "h",
+          TokenKind.Access,
+          java.time.Instant.EPOCH
+        ),
+        UserStoreFixtures.envelope
+      )
+      response <- f.copy(logger = logger).login("ada@example.com", "anything")
+      body <- response.as[ErrorResponse]
+      logged <- logger.logged
+    } yield {
+      assertEquals(response.status, Status.Unauthorized)
+      assertEquals(body.error, "Email or password is incorrect")
+      val errors = logged.collect {
+        case StructuredTestingLogger.ERROR(message, _, ctx) => (message, ctx)
+      }
+      assertEquals(
+        errors.map(_._1),
+        Vector("Stored password hash is malformed")
+      )
+      assertEquals(
+        errors.flatMap(_._2.get("user_id")),
+        Vector(AccountId.render(userId))
+      )
+      assert(!logged.exists(_.toString.contains("corrupt-row")))
+    }
+  }
+
+  test("no log line or context ever carries a password or a raw token") {
+    val logger = StructuredTestingLogger.impl[IO]()
+    val password = "correct-horse-battery-staple"
+    for {
+      f0 <- fixture
+      f = f0.copy(logger = logger)
+      signup <- f.signup("ada@example.com", password)
+      signupBody <- signup.as[SignupResponse]
+      login <- f.login("ada@example.com", password)
+      loginBody <- login.as[LoginResponse]
+      _ <- f.login("ada@example.com", "wrong-horse-battery")
+      _ <- f.signup("ada@example.com", password)
+      _ <- f.signup("ada@example.com", "short")
+      _ <- f.login("nobody@example.com", password)
+      logged <- logger.logged
+    } yield {
+      assert(logged.nonEmpty)
+      val secrets = List(
+        password,
+        "wrong-horse-battery",
+        signupBody.token,
+        loginBody.token,
+        loginBody.refreshToken
+      )
+      logged.foreach { entry =>
+        val text = entry.message + entry.ctx.mkString + entry.throwOpt.mkString
+        secrets.foreach(secret => assert(!text.contains(secret), clue(entry)))
+      }
     }
   }
 }
