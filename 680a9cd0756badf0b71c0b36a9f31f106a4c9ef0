@@ -1,0 +1,1 @@
+Phase 1 verification (Domain parsing): sbt scalafmtCheckAll scalafmtSbtCheck test -> 64/64 green (incl. Postgres Testcontainers suites). Manual verification = suite (prompting off; no live behaviour change, wire messages unchanged).
