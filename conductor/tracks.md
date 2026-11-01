@@ -2,7 +2,7 @@
 
 This file tracks all major tracks for the project.
 
-- [ ] **Track: TD-20.10 REST docs**
+- [~] **Track: TD-20.10 REST docs**
   *Link: [./tracks/rest-docs_20261101/](./tracks/rest-docs_20261101/)*
 
 ---
