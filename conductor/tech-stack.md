@@ -23,6 +23,8 @@
   their mirror. CI restores gluon's `registry/` git export into the throwaway
   Apicurio first, so the check compares against the real baseline;
   `scripts/verify-schema-registry-check.sh` does the same locally.
+- AsyncAPI 3.0 (gluon TD-19, purekafka 0.6.0 / sbt-purekafka-docs 0.6.0-dev):
+  `send`/`receive` from this service's side (it only sends `UserRegistered`).
 
 ## Persistence
 - skunk 1.0.0 — pure-FP, non-blocking Postgres access
