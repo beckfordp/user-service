@@ -10,6 +10,7 @@ import org.http4s.HttpRoutes
 import org.typelevel.log4cats.StructuredLogger
 import sttp.model.StatusCode
 import sttp.tapir._
+import sttp.tapir.Schema.annotations.{description, encodedExample}
 import sttp.tapir.generic.auto._
 import sttp.tapir.json.circe._
 import sttp.tapir.server.ServerEndpoint
@@ -28,27 +29,66 @@ import userservice.domain.{
 
 import scala.reflect.ClassTag
 
-final case class SignupRequest(email: String, password: String)
+@description("Credentials for a new account.")
+final case class SignupRequest(
+    @description("Email address; trimmed and lower-cased before storage.")
+    @encodedExample("user@example.com")
+    email: String,
+    @description(
+      "Plaintext password, at least 8 characters. Never stored or logged."
+    )
+    @encodedExample("correct-horse-battery-staple")
+    password: String
+)
 
 object SignupRequest {
   implicit val codec: Codec[SignupRequest] = deriveCodec
 }
 
-final case class LoginRequest(email: String, password: String)
+@description("Credentials for an existing account.")
+final case class LoginRequest(
+    @description("Email address; trimmed and lower-cased before lookup.")
+    @encodedExample("user@example.com")
+    email: String,
+    @description(
+      "Plaintext password; must be non-empty. Never stored or logged."
+    )
+    @encodedExample("correct-horse-battery-staple")
+    password: String
+)
 
 object LoginRequest {
   implicit val codec: Codec[LoginRequest] = deriveCodec
 }
 
-final case class SignupResponse(userId: String, token: String)
+@description("A new account and its first access token.")
+final case class SignupResponse(
+    @description("New user's id (UUID).")
+    @encodedExample("5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e")
+    userId: String,
+    @description(
+      "Opaque access token (1-hour TTL). Shown once; store it client-side, never log it."
+    )
+    @encodedExample("example-access-token-not-valid")
+    token: String
+)
 
 object SignupResponse {
   implicit val codec: Codec[SignupResponse] = deriveCodec
 }
 
+@description("A successful login and a fresh token pair.")
 final case class LoginResponse(
+    @description("User's id (UUID).")
+    @encodedExample("5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e")
     userId: String,
+    @description("Opaque access token (1-hour TTL). Shown once; never log it.")
+    @encodedExample("example-access-token-not-valid")
     token: String,
+    @description(
+      "Opaque refresh token (30-day TTL). Only its hash is stored; never log it."
+    )
+    @encodedExample("example-refresh-token-not-valid")
     refreshToken: String
 )
 
@@ -56,7 +96,12 @@ object LoginResponse {
   implicit val codec: Codec[LoginResponse] = deriveCodec
 }
 
-final case class ErrorResponse(error: String)
+@description("Error body.")
+final case class ErrorResponse(
+    @description("Human-readable reason.")
+    @encodedExample("Enter a valid email address")
+    error: String
+)
 
 object ErrorResponse {
   implicit val codec: Codec[ErrorResponse] = deriveCodec
@@ -84,28 +129,70 @@ object AuthRoutes {
 
   private def fixedVariant[E <: SignupError | LoginError: ClassTag](
       status: StatusCode,
-      error: E
+      error: E,
+      what: String
   ): EndpointOutput.OneOfVariant[E] =
     oneOfVariant(
       statusCode(status)
-        .and(jsonBody[ErrorResponse])
+        .and(
+          jsonBody[ErrorResponse]
+            .description(what)
+            .example(ErrorResponse(message(error)))
+        )
         .map[E](_ => error)(e => ErrorResponse(message(e)))
     )
 
   private val invalidEmailVariant =
-    fixedVariant(StatusCode.BadRequest, AuthError.InvalidEmail)
+    fixedVariant(
+      StatusCode.BadRequest,
+      AuthError.InvalidEmail,
+      "Email is invalid."
+    )
 
   private val passwordTooShortVariant =
-    fixedVariant(StatusCode.BadRequest, AuthError.PasswordTooShort)
+    fixedVariant(
+      StatusCode.BadRequest,
+      AuthError.PasswordTooShort,
+      "Password is shorter than 8 characters."
+    )
 
   private val passwordMissingVariant =
-    fixedVariant(StatusCode.BadRequest, AuthError.PasswordMissing)
+    fixedVariant(
+      StatusCode.BadRequest,
+      AuthError.PasswordMissing,
+      "Password is empty."
+    )
 
   private val duplicateVariant =
-    fixedVariant(StatusCode.Conflict, AuthError.DuplicateEmail)
+    fixedVariant(
+      StatusCode.Conflict,
+      AuthError.DuplicateEmail,
+      "Email is already registered."
+    )
 
   private val invalidCredentialsVariant =
-    fixedVariant(StatusCode.Unauthorized, AuthError.InvalidCredentials)
+    fixedVariant(
+      StatusCode.Unauthorized,
+      AuthError.InvalidCredentials,
+      "Unknown email or wrong password."
+    )
+
+  private val exampleSignupRequest =
+    SignupRequest("user@example.com", "correct-horse-battery-staple")
+
+  private val exampleSignupResponse = SignupResponse(
+    "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
+    "example-access-token-not-valid"
+  )
+
+  private val exampleLoginRequest =
+    LoginRequest("user@example.com", "correct-horse-battery-staple")
+
+  private val exampleLoginResponse = LoginResponse(
+    "5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e",
+    "example-access-token-not-valid",
+    "example-refresh-token-not-valid"
+  )
 
   private val signupEndpoint: PublicEndpoint[
     SignupRequest,
@@ -115,9 +202,9 @@ object AuthRoutes {
   ] =
     endpoint.post
       .in("auth" / "signup")
-      .in(jsonBody[SignupRequest])
+      .in(jsonBody[SignupRequest].example(exampleSignupRequest))
       .out(statusCode(StatusCode.Created))
-      .out(jsonBody[SignupResponse])
+      .out(jsonBody[SignupResponse].example(exampleSignupResponse))
       .errorOut(
         oneOf[SignupError](
           invalidEmailVariant,
@@ -125,6 +212,11 @@ object AuthRoutes {
           duplicateVariant
         )
       )
+      .summary("Sign up")
+      .description(
+        "Creates an account and returns its first access token (201). The email is trimmed and lower-cased; an invalid email or a password under 8 characters → 400, an already-registered email → 409. Writes the account, token and `UserRegistered` outbox row in one transaction (event published asynchronously). Not idempotent — a retry with the same email → 409."
+      )
+      .tag("auth")
 
   private val loginEndpoint: PublicEndpoint[
     LoginRequest,
@@ -134,8 +226,8 @@ object AuthRoutes {
   ] =
     endpoint.post
       .in("auth" / "login")
-      .in(jsonBody[LoginRequest])
-      .out(jsonBody[LoginResponse])
+      .in(jsonBody[LoginRequest].example(exampleLoginRequest))
+      .out(jsonBody[LoginResponse].example(exampleLoginResponse))
       .errorOut(
         oneOf[LoginError](
           invalidEmailVariant,
@@ -143,6 +235,11 @@ object AuthRoutes {
           invalidCredentialsVariant
         )
       )
+      .summary("Log in")
+      .description(
+        "Checks email + password and returns a fresh access token and refresh token (200). An invalid email or empty password → 400. An unknown email and a wrong password both → 401 with the same body; an unknown email still runs one password hash so timing doesn't reveal registered emails. Tokens are opaque; only their SHA-256 hashes are stored."
+      )
+      .tag("auth")
 
   def signupServerEndpoint[F[_]: Monad: Clock: UUIDGen](
       store: UserStore[F],
