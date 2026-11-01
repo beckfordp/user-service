@@ -1,6 +1,7 @@
 package userservice
 
-import cats.effect.{Async, Ref, Resource, Sync}
+import cats.Monad
+import cats.effect.{Async, Clock, Ref, Resource, Sync}
 import cats.effect.std.Console
 import cats.syntax.all._
 import userservice.domain.{AccountId, Email, TokenId, TokenKind}
@@ -68,11 +69,11 @@ trait UserStore[F[_]] {
 
 object UserStore {
 
-  def inMemory[F[_]: Sync]: F[UserStore[F]] =
+  def inMemory[F[_]: Monad: Clock: Ref.Make]: F[UserStore[F]] =
     inMemoryWithOutbox[F].map(_._1)
 
   /** In-memory interpreter plus the outbox rows it captured, for tests. */
-  def inMemoryWithOutbox[F[_]: Sync]
+  def inMemoryWithOutbox[F[_]: Monad: Clock: Ref.Make]
       : F[(UserStore[F], Ref[F, List[(String, EventEnvelope)]])] =
     for {
       accounts <- Ref.of[F, Map[AccountId, StoredAccount]](Map.empty)
@@ -80,7 +81,7 @@ object UserStore {
       outbox <- Ref.of[F, List[(String, EventEnvelope)]](Nil)
     } yield {
       val store = new UserStore[F] {
-        def ping: F[Boolean] = Sync[F].pure(true)
+        def ping: F[Boolean] = Monad[F].pure(true)
 
         def createAccount(
             id: AccountId,
@@ -89,25 +90,27 @@ object UserStore {
             accessToken: NewToken,
             envelope: EventEnvelope
         ): F[Either[CreateAccountError, UserAccount]] =
-          accounts
-            .modify { current =>
-              if (current.values.exists(_.email == email)) {
-                (current, Left(DuplicateEmail))
-              } else {
-                (
-                  current + (id -> StoredAccount(id, email, passwordHash)),
-                  Right(UserAccount(id, email, Instant.now()))
-                )
+          Clock[F].realTimeInstant.flatMap { now =>
+            accounts
+              .modify { current =>
+                if (current.values.exists(_.email == email)) {
+                  (current, Left(DuplicateEmail))
+                } else {
+                  (
+                    current + (id -> StoredAccount(id, email, passwordHash)),
+                    Right(UserAccount(id, email, now))
+                  )
+                }
               }
-            }
-            .flatMap {
-              case Right(account) =>
-                tokens.update(_ :+ accessToken) *>
-                  outbox
-                    .update(_ :+ (AccountId.render(id) -> envelope))
-                    .as(Right(account))
-              case Left(error) => Sync[F].pure(Left(error))
-            }
+              .flatMap {
+                case Right(account) =>
+                  tokens.update(_ :+ accessToken) *>
+                    outbox
+                      .update(_ :+ (AccountId.render(id) -> envelope))
+                      .as(Right(account))
+                case Left(error) => Monad[F].pure(Left(error))
+              }
+          }
 
         def findByEmail(email: Email): F[Option[StoredAccount]] =
           accounts.get.map(_.values.find(_.email == email))

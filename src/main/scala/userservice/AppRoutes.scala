@@ -27,7 +27,8 @@ object AppRoutes {
   def all[F[_]: Async](
       store: UserStore[F],
       telemetry: Telemetry[F],
-      auth: AuthConfig,
+      hasher: PasswordHasher[F],
+      tokens: TokenIssuer[F],
       channels: List[AsyncApiChannel[?]],
       staticAsyncApiDocsDir: String
   ): HttpRoutes[F] = {
@@ -41,14 +42,14 @@ object AppRoutes {
       List(
         AuthRoutes.signupServerEndpoint[F](
           store,
-          PasswordHasher(auth.iterations),
-          TokenIssuer(auth.accessTokenTtl, auth.refreshTokenTtl),
+          hasher,
+          tokens,
           telemetry.logger
         ),
         AuthRoutes.loginServerEndpoint[F](
           store,
-          PasswordHasher(auth.iterations),
-          TokenIssuer(auth.accessTokenTtl, auth.refreshTokenTtl),
+          hasher,
+          tokens,
           telemetry.logger
         ),
         HealthRoutes.healthServerEndpoint[F],

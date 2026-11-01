@@ -37,10 +37,18 @@ object Main extends IOApp.Simple {
       )("user-service starting")
     )
     store <- UserStore.postgres[IO](config.postgres, telemetry.meter)
+    hasher <- Resource.eval(PasswordHasher.pbkdf2[IO](config.auth.iterations))
+    tokens <- Resource.eval(
+      TokenIssuer.secureRandom[IO](
+        config.auth.accessTokenTtl,
+        config.auth.refreshTokenTtl
+      )
+    )
     routes = AppRoutes.all[IO](
       store,
       telemetry,
-      config.auth,
+      hasher,
+      tokens,
       AsyncApiChannels.channels,
       config.asyncApiHtmlDir
     )

@@ -11,12 +11,11 @@ import scala.concurrent.duration._
 
 class AuthRoutesSuite extends CatsEffectSuite {
 
-  private val hasher = PasswordHasher(iterations = 1000)
-  private val tokens = TokenIssuer(accessTtl = 1.hour, refreshTtl = 30.days)
-
   private final case class Fixture(
       store: UserStore[IO],
-      outbox: cats.effect.Ref[IO, List[(String, EventEnvelope)]]
+      outbox: cats.effect.Ref[IO, List[(String, EventEnvelope)]],
+      hasher: PasswordHasher[IO],
+      tokens: TokenIssuer[IO]
   ) {
     val routes: HttpRoutes[IO] =
       AuthRoutes.routes[IO](store, hasher, tokens, NoOpLogger[IO])
@@ -35,9 +34,11 @@ class AuthRoutesSuite extends CatsEffectSuite {
   }
 
   private val fixture: IO[Fixture] =
-    UserStore
-      .inMemoryWithOutbox[IO]
-      .map { case (store, outbox) => Fixture(store, outbox) }
+    for {
+      (store, outbox) <- UserStore.inMemoryWithOutbox[IO]
+      hasher <- PasswordHasher.pbkdf2[IO](iterations = 1000)
+      tokens <- TokenIssuer.secureRandom[IO](1.hour, 30.days)
+    } yield Fixture(store, outbox, hasher, tokens)
 
   test(
     "signup returns 201 {userId, token} and writes the UserRegistered event"

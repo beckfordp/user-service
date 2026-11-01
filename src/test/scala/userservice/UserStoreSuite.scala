@@ -1,6 +1,7 @@
 package userservice
 
 import cats.effect.IO
+import cats.effect.testkit.TestControl
 import munit.CatsEffectSuite
 import userservice.domain.{AccountId, TokenId, TokenKind}
 
@@ -119,5 +120,22 @@ class UserStoreSuite extends CatsEffectSuite {
         token(newTokenId(), accountId, TokenKind.Refresh)
       )
     } yield assertEquals(result, ())
+  }
+
+  test("the in-memory createdAt comes from Clock[F]") {
+    TestControl
+      .executeEmbed(
+        for {
+          store <- UserStore.inMemory[IO]
+          result <- store.createAccount(
+            accountId,
+            TestValues.email("clock@example.com"),
+            "hash",
+            token(newTokenId(), accountId, TokenKind.Access),
+            envelope
+          )
+        } yield result.map(_.createdAt)
+      )
+      .map(createdAt => assertEquals(createdAt, Right(Instant.EPOCH)))
   }
 }

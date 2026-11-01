@@ -1,6 +1,8 @@
 package userservice
 
-import cats.effect.Sync
+import cats.Monad
+import cats.effect.Clock
+import cats.effect.std.UUIDGen
 import cats.syntax.all._
 import io.circe.Codec
 import io.circe.generic.semiauto.deriveCodec
@@ -10,7 +12,6 @@ import sttp.tapir.Schema.annotations.{description, encodedExample}
 import userservice.domain.{AccountId, Email}
 
 import java.time.Instant
-import java.util.UUID
 
 /** Shared Kafka envelope (ADR 0009) — same shape as every other service. */
 final case class EventEnvelope(
@@ -46,15 +47,15 @@ object AuthEvents {
   private val eventSource = "user-service"
 
   /** The `UserRegistered` outbox envelope (US-16.3), correlated by userId. */
-  def userRegistered[F[_]: Sync](
+  def userRegistered[F[_]: Monad: Clock: UUIDGen](
       userId: AccountId,
       email: Email
   ): F[EventEnvelope] =
     for {
-      eventId <- Sync[F].delay(UUID.randomUUID().toString)
-      timestamp <- Sync[F].realTimeInstant
+      eventId <- UUIDGen.randomUUID[F]
+      timestamp <- Clock[F].realTimeInstant
     } yield EventEnvelope(
-      eventId = eventId,
+      eventId = eventId.toString,
       eventType = "UserRegistered",
       timestamp = timestamp,
       source = eventSource,

@@ -1,6 +1,8 @@
 package userservice
 
-import cats.effect.{Async, Sync}
+import cats.Monad
+import cats.effect.{Async, Clock}
+import cats.effect.std.UUIDGen
 import cats.syntax.all._
 import io.circe.Codec
 import io.circe.generic.semiauto.deriveCodec
@@ -24,7 +26,6 @@ import userservice.domain.{
   TokenKind
 }
 
-import java.util.UUID
 import scala.reflect.ClassTag
 
 final case class SignupRequest(email: String, password: String)
@@ -143,10 +144,10 @@ object AuthRoutes {
         )
       )
 
-  def signupServerEndpoint[F[_]: Sync](
+  def signupServerEndpoint[F[_]: Monad: Clock: UUIDGen](
       store: UserStore[F],
-      hasher: PasswordHasher,
-      tokens: TokenIssuer,
+      hasher: PasswordHasher[F],
+      tokens: TokenIssuer[F],
       logger: StructuredLogger[F]
   ): ServerEndpoint[Any, F] =
     signupEndpoint.serverLogic[F] { request =>
@@ -165,11 +166,10 @@ object AuthRoutes {
               .as(Left(error))
           case Right(credentials) =>
             for {
-              userId <- Sync[F].delay(
-                AccountId.fromUuid(UUID.randomUUID())
-              )
-              passwordHash <- hasher.hash[F](credentials.password)
-              accessToken <- tokens.issue[F](TokenKind.Access)
+              userId <- UUIDGen.randomUUID[F].map(AccountId.fromUuid)
+              accessTokenId <- UUIDGen.randomUUID[F].map(TokenId.fromUuid)
+              passwordHash <- hasher.hash(credentials.password)
+              accessToken <- tokens.issue(TokenKind.Access)
               envelope <- AuthEvents.userRegistered[F](
                 userId,
                 credentials.email
@@ -179,7 +179,7 @@ object AuthRoutes {
                 credentials.email,
                 passwordHash,
                 NewToken(
-                  TokenId.fromUuid(UUID.randomUUID()),
+                  accessTokenId,
                   userId,
                   accessToken.hash,
                   TokenKind.Access,
@@ -217,10 +217,10 @@ object AuthRoutes {
       } yield result
     }
 
-  def loginServerEndpoint[F[_]: Sync](
+  def loginServerEndpoint[F[_]: Monad: UUIDGen](
       store: UserStore[F],
-      hasher: PasswordHasher,
-      tokens: TokenIssuer,
+      hasher: PasswordHasher[F],
+      tokens: TokenIssuer[F],
       logger: StructuredLogger[F]
   ): ServerEndpoint[Any, F] =
     loginEndpoint.serverLogic[F] { request =>
@@ -249,7 +249,7 @@ object AuthRoutes {
                   )
               case Some(account) =>
                 hasher
-                  .verify[F](credentials.password, account.passwordHash)
+                  .verify(credentials.password, account.passwordHash)
                   .flatMap {
                     case false =>
                       logger
@@ -261,18 +261,20 @@ object AuthRoutes {
                         )
                     case true =>
                       for {
-                        access <- tokens.issue[F](TokenKind.Access)
-                        refresh <- tokens.issue[F](TokenKind.Refresh)
+                        accessId <- UUIDGen.randomUUID[F].map(TokenId.fromUuid)
+                        refreshId <- UUIDGen.randomUUID[F].map(TokenId.fromUuid)
+                        access <- tokens.issue(TokenKind.Access)
+                        refresh <- tokens.issue(TokenKind.Refresh)
                         _ <- store.recordLoginTokens(
                           NewToken(
-                            TokenId.fromUuid(UUID.randomUUID()),
+                            accessId,
                             account.id,
                             access.hash,
                             TokenKind.Access,
                             access.expiresAt
                           ),
                           NewToken(
-                            TokenId.fromUuid(UUID.randomUUID()),
+                            refreshId,
                             account.id,
                             refresh.hash,
                             TokenKind.Refresh,
@@ -299,8 +301,8 @@ object AuthRoutes {
 
   def routes[F[_]: Async](
       store: UserStore[F],
-      hasher: PasswordHasher,
-      tokens: TokenIssuer,
+      hasher: PasswordHasher[F],
+      tokens: TokenIssuer[F],
       logger: StructuredLogger[F]
   ): HttpRoutes[F] =
     Http4sServerInterpreter[F]().toRoutes(

@@ -130,6 +130,8 @@ lazy val root = project
       "org.scalameta" %% "munit" % munitVersion % Test,
       // munit-cats-effect: lets test bodies return IO[Unit] and run under munit directly.
       "org.typelevel" %% "munit-cats-effect" % munitCatsEffectVersion % Test,
+      // cats-effect-testkit: TestControl, to pin Clock[F] in tests.
+      "org.typelevel" %% "cats-effect-testkit" % catsEffectVersion % Test,
       // munit-scalacheck: property-based tests for pure user-domain rules.
       "org.scalameta" %% "munit-scalacheck" % munitScalacheckVersion % Test,
       // testcontainers-scala: spins up a real, ephemeral Postgres container for

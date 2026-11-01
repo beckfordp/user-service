@@ -50,6 +50,8 @@
 
 ## Testing
 - munit 1.3.6 + munit-cats-effect 2.2.1
+- cats-effect-testkit 3.7.0 — `TestControl` pins `Clock[F]` (2026-11-01,
+  TD-16.7: token expiry / `createdAt` come from `Clock`, not the wall clock)
 - log4cats-testing 2.8.0 — structured-log assertions
 - testcontainers-scala 0.43.6 (postgresql + munit modules)
 - scalafmt (default Scala 3 style) — `sbt scalafmtCheck test` in CI

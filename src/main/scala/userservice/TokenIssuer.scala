@@ -1,6 +1,7 @@
 package userservice
 
 import cats.effect.Sync
+import cats.syntax.all._
 import userservice.domain.TokenKind
 
 import java.security.{MessageDigest, SecureRandom}
@@ -18,40 +19,55 @@ final case class IssuedToken(
     expiresAt: Instant
 )
 
-/** Opaque random tokens (US-16), 32 bytes of `SecureRandom` base64url-encoded.
-  * Storage keeps only the SHA-256 hash, so a database leak doesn't expose
-  * usable tokens.
-  */
-final case class TokenIssuer(
-    accessTtl: FiniteDuration,
-    refreshTtl: FiniteDuration
-) {
+/** Token-issuing algebra (US-16). */
+trait TokenIssuer[F[_]] {
+  def issue(kind: TokenKind): F[IssuedToken]
+}
 
-  private val random = new SecureRandom()
+object TokenIssuer {
+
   private val tokenBytes = 32
-  private val encoder = Base64.getUrlEncoder.withoutPadding()
 
-  def issue[F[_]: Sync](kind: TokenKind): F[IssuedToken] = Sync[F].delay {
-    val bytes = new Array[Byte](tokenBytes)
-    random.nextBytes(bytes)
-    val value = encoder.encodeToString(bytes)
-    val ttl = kind match {
-      case TokenKind.Access  => accessTtl
-      case TokenKind.Refresh => refreshTtl
+  /** Opaque random tokens, 32 bytes of `SecureRandom` base64url-encoded, expiry
+    * from `Clock[F]`. Storage keeps only the SHA-256 hash, so a database leak
+    * doesn't expose usable tokens. The `SecureRandom` is created inside `F`.
+    */
+  def secureRandom[F[_]: Sync](
+      accessTtl: FiniteDuration,
+      refreshTtl: FiniteDuration
+  ): F[TokenIssuer[F]] =
+    Sync[F].delay(new SecureRandom()).map { random =>
+      val encoder = Base64.getUrlEncoder.withoutPadding()
+
+      new TokenIssuer[F] {
+        def issue(kind: TokenKind): F[IssuedToken] =
+          for {
+            value <- Sync[F].delay {
+              val bytes = new Array[Byte](tokenBytes)
+              random.nextBytes(bytes)
+              encoder.encodeToString(bytes)
+            }
+            now <- Sync[F].realTimeInstant
+          } yield {
+            val ttl = kind match {
+              case TokenKind.Access  => accessTtl
+              case TokenKind.Refresh => refreshTtl
+            }
+            IssuedToken(
+              value = value,
+              hash = hash(value),
+              kind = kind,
+              expiresAt = now.plusSeconds(ttl.toSeconds)
+            )
+          }
+      }
     }
-    IssuedToken(
-      value = value,
-      hash = hash(value),
-      kind = kind,
-      expiresAt = Instant.now().plusSeconds(ttl.toSeconds)
-    )
-  }
 
-  def hash(value: String): String = {
-    val digest = MessageDigest.getInstance("SHA-256")
-    digest
+  /** Hex SHA-256 of a raw token value — the only form ever stored. */
+  def hash(value: String): String =
+    MessageDigest
+      .getInstance("SHA-256")
       .digest(value.getBytes("UTF-8"))
       .map(byte => f"${byte & 0xff}%02x")
       .mkString
-  }
 }

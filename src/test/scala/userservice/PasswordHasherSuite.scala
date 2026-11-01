@@ -5,24 +5,29 @@ import munit.CatsEffectSuite
 
 class PasswordHasherSuite extends CatsEffectSuite {
 
-  private val hasher = PasswordHasher(iterations = 1000)
+  private val hasher: IO[PasswordHasher[IO]] =
+    PasswordHasher.pbkdf2[IO](iterations = 1000)
+
+  private val password = TestValues.password("correct-horse-battery-staple")
 
   test("hash returns the documented pbkdf2 format") {
-    hasher.hash[IO](TestValues.password("correct horse")).map { stored =>
+    hasher.flatMap(_.hash(password)).map { stored =>
       val parts = stored.split("\\$")
       assertEquals(parts.length, 4)
       assertEquals(parts(0), "pbkdf2")
       assertEquals(parts(1), "1000")
       assert(parts(2).nonEmpty)
       assert(parts(3).nonEmpty)
+      assert(!stored.contains(password.value))
     }
   }
 
   test("verify accepts the right password and rejects a wrong one") {
     for {
-      stored <- hasher.hash[IO](TestValues.password("correct horse"))
-      right <- hasher.verify[IO](TestValues.password("correct horse"), stored)
-      wrong <- hasher.verify[IO](TestValues.password("wrong horse"), stored)
+      h <- hasher
+      stored <- h.hash(password)
+      right <- h.verify(password, stored)
+      wrong <- h.verify(TestValues.password("wrong-horse-battery"), stored)
     } yield {
       assert(right)
       assert(!wrong)
@@ -31,16 +36,17 @@ class PasswordHasherSuite extends CatsEffectSuite {
 
   test("the same password hashes differently each time (random salt)") {
     for {
-      first <- hasher.hash[IO](TestValues.password("correct horse"))
-      second <- hasher.hash[IO](TestValues.password("correct horse"))
+      h <- hasher
+      first <- h.hash(password)
+      second <- h.hash(password)
     } yield assertNotEquals(first, second)
   }
 
   test("verify is false for a malformed stored value") {
     for {
-      bad <- hasher
-        .verify[IO](TestValues.password("correct horse"), "not-a-hash")
-      empty <- hasher.verify[IO](TestValues.password("correct horse"), "")
+      h <- hasher
+      bad <- h.verify(password, "not-a-hash")
+      empty <- h.verify(password, "")
     } yield {
       assert(!bad)
       assert(!empty)

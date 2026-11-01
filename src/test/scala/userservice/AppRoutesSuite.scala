@@ -45,10 +45,13 @@ class AppRoutesSuite extends CatsEffectSuite {
         testTracer <- Tracing.test[IO]("app-routes-suite")
         testMeter <- Metrics.test[IO]("app-routes-suite")
         store <- Resource.eval(UserStore.inMemory[IO])
+        hasher <- Resource.eval(PasswordHasher.pbkdf2[IO](1000))
+        tokens <- Resource.eval(TokenIssuer.secureRandom[IO](1.hour, 30.days))
       } yield AppRoutes.all[IO](
         store,
         Telemetry(testTracer.tracer, testMeter.meter, NoOpLogger[IO]),
-        AuthConfig(1.hour, 30.days, 1000),
+        hasher,
+        tokens,
         AsyncApiChannels.channels,
         staticAsyncApiDocsDir = fixtureDir.toString
       )).use(f)
