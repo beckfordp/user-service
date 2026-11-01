@@ -2,6 +2,9 @@
 
 This file tracks all major tracks for the project.
 
+- [~] **Track: TD-16.7 user-service review fixes**
+  *Link: [./tracks/user-review-fixes_20261101/](./tracks/user-review-fixes_20261101/)*
+
 ---
 
 ## Backlog
