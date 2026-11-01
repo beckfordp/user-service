@@ -46,10 +46,10 @@ must never show a real credential or token in an example.
   (TD-19); adding typed 500 variants for unexpected failures (tapir's
   default empty 500 stays undeclared); client-side mirrors.
 
-## Appendix: proposed descriptions (pending user approval, 2026-11-01)
+## Appendix: approved descriptions (2026-11-01)
 
-Nothing below is applied to code yet. The user reviews this appendix
-first; Phase 3 stays blocked until it is approved.
+Approved by the user exactly as proposed (2026-11-01); Phase 3 applies the
+content below to code.
 
 ### Endpoints
 | Endpoint | summary | description | tag |
