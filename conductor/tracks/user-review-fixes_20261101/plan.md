@@ -5,7 +5,7 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Domain parsing' (Protocol in workflow.md) — covered by suite (64 green)
 
 ## Phase 2: Effects and capabilities (FR-2)
-- [ ] Task: tests first — hasher/issuer built in `F`, issuer expiry from `Clock` (`TestControl`), in-memory `createdAt` from `Clock` (red) → `PasswordHasher[F]`/`TokenIssuer[F]` algebras, `UUIDGen`/`Clock`, narrowed bounds, one hasher/issuer wired in `Main`; green
+- [x] Task: tests first — hasher/issuer built in `F`, issuer expiry from `Clock` (`TestControl`), in-memory `createdAt` from `Clock` (red) → `PasswordHasher[F]`/`TokenIssuer[F]` algebras, `UUIDGen`/`Clock`, narrowed bounds, one hasher/issuer wired in `Main`; green — red compile failure → 66/66; signup also needs `Clock` (event timestamp); in-memory store `Monad`+`Clock`+`Ref.Make`; `cats-effect-testkit` added (Test) 6374004
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Effects and capabilities' (Protocol in workflow.md)
 
 ## Phase 3: Auth hardening (FR-3)
