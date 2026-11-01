@@ -30,7 +30,7 @@ cleanup() {
 trap cleanup EXIT
 
 wait_ready() {
-  for _ in $(seq 1 90); do
+  for _ in $(seq 1 180); do
     status="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/health/ready || true)"
     [ "$status" = "200" ] && return 0
     sleep 1
@@ -46,6 +46,10 @@ echo "   OK: postgres starting"
 
 echo
 echo "2. Starting user-service (sbt run) in the background..."
+if [ -z "${GITHUB_TOKEN:-}" ] || [ -z "${GITHUB_ACTOR:-}" ]; then
+  echo "WARN: GITHUB_TOKEN / GITHUB_ACTOR not set - resolving purerestlib from" >&2
+  echo "      GitHub Packages will fail without a read:packages token." >&2
+fi
 sbt run </dev/null >/tmp/user-service-verify-rest-docs.log 2>&1 &
 SBT_PID=$!
 wait_ready
