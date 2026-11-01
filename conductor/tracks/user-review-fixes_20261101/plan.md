@@ -11,3 +11,7 @@
 ## Phase 3: Auth hardening (FR-3) [checkpoint: ddf003a]
 - [x] Task: tests first — unknown-email login runs one verify; malformed hash → `Malformed` + error log + 401; no secret in any log; `iterations = 0` rejected; blank-password 400; stored hash ≠ plaintext (red) → implement; green — red compile failure → 76/76; dummy check uses random salt+hash (no startup PBKDF2); TTLs > 0 also validated 438fc2a
 - [x] Task: Conductor - User Manual Verification 'Phase 3: Auth hardening' (Protocol in workflow.md) — covered by suite (76 green; 93.07% stmt / 92.59% branch)
+
+## Phase: Review Fixes
+- [x] Task: Apply review suggestions — tech-stack.md synced to the pinned purerestlib 0.4.0 / purekafka 0.6.1 (was 0.1.0 / 0.5.0); no code findings 24bb4f1
+- [x] Task: Final verification — `sbt scalafmtCheckAll` clean; full suite 76/76; `coverageReport` 93.07% stmt / 92.59% branch (>80% required)
