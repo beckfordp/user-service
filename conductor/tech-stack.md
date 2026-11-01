@@ -57,7 +57,7 @@
 - scalafmt (default Scala 3 style) — `sbt scalafmtCheck test` in CI
 
 ## Shared platform library
-- `purerestlib` 0.4.0 (`io.github.beckfordp`) — tracing, structured logging,
+- `purerestlib` 0.7.3 (`io.github.beckfordp`) — tracing, structured logging,
   metrics, resilience, tapir docs. Published artifact from GitHub Packages.
 
 ## Packaging / local deploy
