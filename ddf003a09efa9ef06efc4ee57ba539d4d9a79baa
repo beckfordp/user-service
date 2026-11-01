@@ -1,0 +1,1 @@
+Phase 3 verification (Auth hardening): sbt scalafmtCheckAll scalafmtSbtCheck test -> 76/76 green; sbt coverage test coverageReport -> 93.07% statements / 92.59% branches. Manual verification = suite (prompting off): timing-oracle, malformed-hash logging, no-secret-logging and config validation are all asserted in-process; wire messages and statuses unchanged.
