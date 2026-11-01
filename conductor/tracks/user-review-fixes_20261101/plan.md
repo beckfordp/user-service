@@ -8,6 +8,6 @@
 - [x] Task: tests first — hasher/issuer built in `F`, issuer expiry from `Clock` (`TestControl`), in-memory `createdAt` from `Clock` (red) → `PasswordHasher[F]`/`TokenIssuer[F]` algebras, `UUIDGen`/`Clock`, narrowed bounds, one hasher/issuer wired in `Main`; green — red compile failure → 66/66; signup also needs `Clock` (event timestamp); in-memory store `Monad`+`Clock`+`Ref.Make`; `cats-effect-testkit` added (Test) 6374004
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Effects and capabilities' (Protocol in workflow.md) — covered by suite (66 green)
 
-## Phase 3: Auth hardening (FR-3)
+## Phase 3: Auth hardening (FR-3) [checkpoint: ddf003a]
 - [x] Task: tests first — unknown-email login runs one verify; malformed hash → `Malformed` + error log + 401; no secret in any log; `iterations = 0` rejected; blank-password 400; stored hash ≠ plaintext (red) → implement; green — red compile failure → 76/76; dummy check uses random salt+hash (no startup PBKDF2); TTLs > 0 also validated 438fc2a
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: Auth hardening' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 3: Auth hardening' (Protocol in workflow.md) — covered by suite (76 green; 93.07% stmt / 92.59% branch)
