@@ -5,7 +5,7 @@ import cats.syntax.all._
 import com.dimafeng.testcontainers.PostgreSQLContainer
 import com.dimafeng.testcontainers.munit.TestContainerForAll
 import munit.CatsEffectSuite
-import userservice.domain.{AccountId, TokenId}
+import userservice.domain.{AccountId, TokenId, TokenKind}
 
 import java.util.UUID
 import org.testcontainers.utility.DockerImageName
@@ -80,7 +80,7 @@ class UserStorePostgresSuite extends CatsEffectSuite with TestContainerForAll {
       id,
       userId,
       s"hash-${TokenId.render(id)}",
-      kind.wire,
+      kind,
       Instant.now().plusSeconds(3600)
     )
 
@@ -95,7 +95,7 @@ class UserStorePostgresSuite extends CatsEffectSuite with TestContainerForAll {
         for {
           result <- store.createAccount(
             userId,
-            "ada@example.com",
+            TestValues.email("ada@example.com"),
             "pbkdf2$1000$salt$hash",
             token(tokenId, userId, TokenKind.Access),
             envelope.copy(correlationId = AccountId.render(userId))
@@ -125,14 +125,14 @@ class UserStorePostgresSuite extends CatsEffectSuite with TestContainerForAll {
         for {
           _ <- store.createAccount(
             firstUser,
-            "dup@example.com",
+            TestValues.email("dup@example.com"),
             "hash-a",
             token(uniqueTokenId(), firstUser, TokenKind.Access),
             envelope
           )
           duplicate <- store.createAccount(
             secondUser,
-            "dup@example.com",
+            TestValues.email("dup@example.com"),
             "hash-b",
             token(uniqueTokenId(), secondUser, TokenKind.Access),
             envelope
@@ -156,13 +156,13 @@ class UserStorePostgresSuite extends CatsEffectSuite with TestContainerForAll {
           userId <- IO(uniqueId())
           _ <- store.createAccount(
             userId,
-            "lookup@example.com",
+            TestValues.email("lookup@example.com"),
             "stored-hash",
             token(uniqueTokenId(), userId, TokenKind.Access),
             envelope
           )
-          found <- store.findByEmail("lookup@example.com")
-          missing <- store.findByEmail("missing@example.com")
+          found <- store.findByEmail(TestValues.email("lookup@example.com"))
+          missing <- store.findByEmail(TestValues.email("missing@example.com"))
         } yield {
           assertEquals(found.map(_.passwordHash), Some("stored-hash"))
           assertEquals(missing, None)
@@ -180,7 +180,7 @@ class UserStorePostgresSuite extends CatsEffectSuite with TestContainerForAll {
         for {
           _ <- store.createAccount(
             userId,
-            "login@example.com",
+            TestValues.email("login@example.com"),
             "hash",
             token(uniqueTokenId(), userId, TokenKind.Access),
             envelope
@@ -220,7 +220,7 @@ class UserStorePostgresSuite extends CatsEffectSuite with TestContainerForAll {
           result <- store
             .createAccount(
               userId,
-              "rollback@example.com",
+              TestValues.email("rollback@example.com"),
               "hash",
               token(uniqueTokenId(), userId, TokenKind.Access),
               envelope

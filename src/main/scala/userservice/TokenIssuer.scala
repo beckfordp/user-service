@@ -1,20 +1,12 @@
 package userservice
 
 import cats.effect.Sync
+import userservice.domain.TokenKind
 
 import java.security.{MessageDigest, SecureRandom}
 import java.time.Instant
 import java.util.Base64
 import scala.concurrent.duration.FiniteDuration
-
-sealed trait TokenKind {
-  def wire: String
-}
-
-object TokenKind {
-  case object Access extends TokenKind { val wire = "access" }
-  case object Refresh extends TokenKind { val wire = "refresh" }
-}
 
 /** An issued token: the raw value is returned to the caller once; only `hash`
   * is persisted.

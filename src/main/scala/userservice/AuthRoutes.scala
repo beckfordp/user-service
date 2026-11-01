@@ -13,9 +13,19 @@ import sttp.tapir.json.circe._
 import sttp.tapir.server.ServerEndpoint
 import sttp.tapir.server.http4s.Http4sServerInterpreter
 
-import userservice.domain.{AccountId, TokenId}
+import userservice.domain.{
+  AccountId,
+  AuthError,
+  Credentials,
+  LoginError,
+  Password,
+  SignupError,
+  TokenId,
+  TokenKind
+}
 
 import java.util.UUID
+import scala.reflect.ClassTag
 
 final case class SignupRequest(email: String, password: String)
 
@@ -51,52 +61,54 @@ object ErrorResponse {
   implicit val codec: Codec[ErrorResponse] = deriveCodec
 }
 
-sealed trait AuthError
-
-object AuthError {
-  final case class Invalid(error: String) extends AuthError
-  case object DuplicateEmail extends AuthError
-  case object InvalidCredentials extends AuthError
-}
-
 /** Public identity API (US-16.1/16.2) — contracts in
   * `gluon/docs/system-design.md`. Signup also writes the `UserRegistered`
-  * outbox row (US-16.3); login publishes nothing.
+  * outbox row (US-16.3); login publishes nothing. Raw input is parsed once by
+  * `domain.Credentials`; each endpoint's error output lists only the
+  * [[SignupError]]/[[LoginError]] cases it can return.
   */
 object AuthRoutes {
 
-  private val invalidVariant: EndpointOutput.OneOfVariant[AuthError.Invalid] =
+  /** The wire message for each error — the response bodies' only field. */
+  private[userservice] def message(error: SignupError | LoginError): String =
+    error match {
+      case AuthError.InvalidEmail     => "Enter a valid email address"
+      case AuthError.PasswordTooShort =>
+        s"Password must be at least ${Password.MinLength} characters"
+      case AuthError.PasswordMissing => "Enter your password"
+      case AuthError.DuplicateEmail  =>
+        "An account with this email already exists"
+      case AuthError.InvalidCredentials => "Email or password is incorrect"
+    }
+
+  private def fixedVariant[E <: SignupError | LoginError: ClassTag](
+      status: StatusCode,
+      error: E
+  ): EndpointOutput.OneOfVariant[E] =
     oneOfVariant(
-      statusCode(StatusCode.BadRequest)
+      statusCode(status)
         .and(jsonBody[ErrorResponse])
-        .map[AuthError.Invalid](e => AuthError.Invalid(e.error))(e =>
-          ErrorResponse(e.error)
-        )
+        .map[E](_ => error)(e => ErrorResponse(message(e)))
     )
 
-  private val duplicateVariant
-      : EndpointOutput.OneOfVariant[AuthError.DuplicateEmail.type] =
-    oneOfVariant(
-      statusCode(StatusCode.Conflict)
-        .and(jsonBody[ErrorResponse])
-        .map[AuthError.DuplicateEmail.type](_ => AuthError.DuplicateEmail)(_ =>
-          ErrorResponse("An account with this email already exists")
-        )
-    )
+  private val invalidEmailVariant =
+    fixedVariant(StatusCode.BadRequest, AuthError.InvalidEmail)
 
-  private val invalidCredentialsVariant
-      : EndpointOutput.OneOfVariant[AuthError.InvalidCredentials.type] =
-    oneOfVariant(
-      statusCode(StatusCode.Unauthorized)
-        .and(jsonBody[ErrorResponse])
-        .map[AuthError.InvalidCredentials.type](_ =>
-          AuthError.InvalidCredentials
-        )(_ => ErrorResponse("Email or password is incorrect"))
-    )
+  private val passwordTooShortVariant =
+    fixedVariant(StatusCode.BadRequest, AuthError.PasswordTooShort)
+
+  private val passwordMissingVariant =
+    fixedVariant(StatusCode.BadRequest, AuthError.PasswordMissing)
+
+  private val duplicateVariant =
+    fixedVariant(StatusCode.Conflict, AuthError.DuplicateEmail)
+
+  private val invalidCredentialsVariant =
+    fixedVariant(StatusCode.Unauthorized, AuthError.InvalidCredentials)
 
   private val signupEndpoint: PublicEndpoint[
     SignupRequest,
-    AuthError,
+    SignupError,
     SignupResponse,
     Any
   ] =
@@ -105,11 +117,17 @@ object AuthRoutes {
       .in(jsonBody[SignupRequest])
       .out(statusCode(StatusCode.Created))
       .out(jsonBody[SignupResponse])
-      .errorOut(oneOf[AuthError](invalidVariant, duplicateVariant))
+      .errorOut(
+        oneOf[SignupError](
+          invalidEmailVariant,
+          passwordTooShortVariant,
+          duplicateVariant
+        )
+      )
 
   private val loginEndpoint: PublicEndpoint[
     LoginRequest,
-    AuthError,
+    LoginError,
     LoginResponse,
     Any
   ] =
@@ -118,35 +136,12 @@ object AuthRoutes {
       .in(jsonBody[LoginRequest])
       .out(jsonBody[LoginResponse])
       .errorOut(
-        oneOf[AuthError](invalidVariant, invalidCredentialsVariant)
+        oneOf[LoginError](
+          invalidEmailVariant,
+          passwordMissingVariant,
+          invalidCredentialsVariant
+        )
       )
-
-  private val emailPattern = "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$".r
-
-  private def normalizeEmail(email: String): String =
-    email.trim.toLowerCase
-
-  private def validateSignup(
-      request: SignupRequest
-  ): Either[AuthError, String] = {
-    val email = normalizeEmail(request.email)
-    if (emailPattern.findFirstIn(email).isEmpty)
-      Left(AuthError.Invalid("Enter a valid email address"))
-    else if (request.password.length < 8)
-      Left(AuthError.Invalid("Password must be at least 8 characters"))
-    else Right(email)
-  }
-
-  private def validateLogin(
-      request: LoginRequest
-  ): Either[AuthError, String] = {
-    val email = normalizeEmail(request.email)
-    if (emailPattern.findFirstIn(email).isEmpty)
-      Left(AuthError.Invalid("Enter a valid email address"))
-    else if (request.password.isEmpty)
-      Left(AuthError.Invalid("Enter your password"))
-    else Right(email)
-  }
 
   def signupServerEndpoint[F[_]: Sync](
       store: UserStore[F],
@@ -158,33 +153,36 @@ object AuthRoutes {
       val context = Map("method" -> "POST", "path" -> "/auth/signup")
       for {
         _ <- logger.info(context)("Received request")
-        result <- validateSignup(request) match {
+        result <- Credentials.parseSignup(
+          request.email,
+          request.password
+        ) match {
           case Left(error) =>
             logger
-              .warn(context + ("error" -> errorText(error)))(
+              .warn(context + ("error" -> message(error)))(
                 "Invalid signup request"
               )
               .as(Left(error))
-          case Right(email) =>
+          case Right(credentials) =>
             for {
               userId <- Sync[F].delay(
                 AccountId.fromUuid(UUID.randomUUID())
               )
-              passwordHash <- hasher.hash[F](request.password)
+              passwordHash <- hasher.hash[F](credentials.password)
               accessToken <- tokens.issue[F](TokenKind.Access)
               envelope <- AuthEvents.userRegistered[F](
-                AccountId.render(userId),
-                email
+                userId,
+                credentials.email
               )
               created <- store.createAccount(
                 userId,
-                email,
+                credentials.email,
                 passwordHash,
                 NewToken(
                   TokenId.fromUuid(UUID.randomUUID()),
                   userId,
                   accessToken.hash,
-                  TokenKind.Access.wire,
+                  TokenKind.Access,
                   accessToken.expiresAt
                 ),
                 envelope
@@ -194,7 +192,7 @@ object AuthRoutes {
                   logger
                     .warn(context)("Duplicate signup")
                     .as(
-                      Left[AuthError, SignupResponse](
+                      Left[SignupError, SignupResponse](
                         AuthError.DuplicateEmail
                       )
                     )
@@ -206,7 +204,7 @@ object AuthRoutes {
                       "Account created"
                     )
                     .as(
-                      Right[AuthError, SignupResponse](
+                      Right[SignupError, SignupResponse](
                         SignupResponse(
                           AccountId.render(account.id),
                           accessToken.value
@@ -229,32 +227,35 @@ object AuthRoutes {
       val context = Map("method" -> "POST", "path" -> "/auth/login")
       for {
         _ <- logger.info(context)("Received request")
-        result <- validateLogin(request) match {
+        result <- Credentials.parseLogin(
+          request.email,
+          request.password
+        ) match {
           case Left(error) =>
             logger
-              .warn(context + ("error" -> errorText(error)))(
+              .warn(context + ("error" -> message(error)))(
                 "Invalid login request"
               )
               .as(Left(error))
-          case Right(email) =>
-            store.findByEmail(email).flatMap {
+          case Right(credentials) =>
+            store.findByEmail(credentials.email).flatMap {
               case None =>
                 logger
                   .warn(context)("Login failed")
                   .as(
-                    Left[AuthError, LoginResponse](
+                    Left[LoginError, LoginResponse](
                       AuthError.InvalidCredentials
                     )
                   )
               case Some(account) =>
                 hasher
-                  .verify[F](request.password, account.passwordHash)
+                  .verify[F](credentials.password, account.passwordHash)
                   .flatMap {
                     case false =>
                       logger
                         .warn(context)("Login failed")
                         .as(
-                          Left[AuthError, LoginResponse](
+                          Left[LoginError, LoginResponse](
                             AuthError.InvalidCredentials
                           )
                         )
@@ -267,14 +268,14 @@ object AuthRoutes {
                             TokenId.fromUuid(UUID.randomUUID()),
                             account.id,
                             access.hash,
-                            TokenKind.Access.wire,
+                            TokenKind.Access,
                             access.expiresAt
                           ),
                           NewToken(
                             TokenId.fromUuid(UUID.randomUUID()),
                             account.id,
                             refresh.hash,
-                            TokenKind.Refresh.wire,
+                            TokenKind.Refresh,
                             refresh.expiresAt
                           )
                         )
@@ -295,12 +296,6 @@ object AuthRoutes {
         }
       } yield result
     }
-
-  private def errorText(error: AuthError): String = error match {
-    case AuthError.Invalid(message)   => message
-    case AuthError.DuplicateEmail     => "duplicate email"
-    case AuthError.InvalidCredentials => "invalid credentials"
-  }
 
   def routes[F[_]: Async](
       store: UserStore[F],

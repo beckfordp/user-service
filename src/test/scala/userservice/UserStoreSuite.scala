@@ -2,7 +2,7 @@ package userservice
 
 import cats.effect.IO
 import munit.CatsEffectSuite
-import userservice.domain.{AccountId, TokenId}
+import userservice.domain.{AccountId, TokenId, TokenKind}
 
 import java.time.Instant
 import java.util.UUID
@@ -35,7 +35,7 @@ class UserStoreSuite extends CatsEffectSuite {
       id,
       userId,
       s"hash-${TokenId.render(id)}",
-      kind.wire,
+      kind,
       expiresAt
     )
 
@@ -44,16 +44,19 @@ class UserStoreSuite extends CatsEffectSuite {
       (store, outbox) <- UserStore.inMemoryWithOutbox[IO]
       result <- store.createAccount(
         accountId,
-        "ada@example.com",
+        TestValues.email("ada@example.com"),
         "pbkdf2$1000$salt$hash",
         token(newTokenId(), accountId, TokenKind.Access),
         envelope
       )
-      found <- store.findByEmail("ada@example.com")
+      found <- store.findByEmail(TestValues.email("ada@example.com"))
       events <- outbox.get
     } yield {
       assertEquals(result.map(_.id), Right(accountId))
-      assertEquals(found.map(_.email), Some("ada@example.com"))
+      assertEquals(
+        found.map(_.email),
+        Some(TestValues.email("ada@example.com"))
+      )
       assertEquals(events.map(_._1), List(AccountId.render(accountId)))
       assertEquals(events.map(_._2.eventType), List("UserRegistered"))
     }
@@ -64,14 +67,14 @@ class UserStoreSuite extends CatsEffectSuite {
       (store, outbox) <- UserStore.inMemoryWithOutbox[IO]
       _ <- store.createAccount(
         accountId,
-        "ada@example.com",
+        TestValues.email("ada@example.com"),
         "hash-a",
         token(newTokenId(), accountId, TokenKind.Access),
         envelope
       )
       duplicate <- store.createAccount(
         accountId2,
-        "ada@example.com",
+        TestValues.email("ada@example.com"),
         "hash-b",
         token(newTokenId(), accountId2, TokenKind.Access),
         envelope
@@ -88,13 +91,13 @@ class UserStoreSuite extends CatsEffectSuite {
       store <- UserStore.inMemory[IO]
       _ <- store.createAccount(
         accountId,
-        "ada@example.com",
+        TestValues.email("ada@example.com"),
         "stored-hash",
         token(newTokenId(), accountId, TokenKind.Access),
         envelope
       )
-      found <- store.findByEmail("ada@example.com")
-      missing <- store.findByEmail("unknown@example.com")
+      found <- store.findByEmail(TestValues.email("ada@example.com"))
+      missing <- store.findByEmail(TestValues.email("unknown@example.com"))
     } yield {
       assertEquals(found.map(_.passwordHash), Some("stored-hash"))
       assertEquals(missing, None)
@@ -106,7 +109,7 @@ class UserStoreSuite extends CatsEffectSuite {
       store <- UserStore.inMemory[IO]
       _ <- store.createAccount(
         accountId,
-        "ada@example.com",
+        TestValues.email("ada@example.com"),
         "hash",
         token(newTokenId(), accountId, TokenKind.Access),
         envelope

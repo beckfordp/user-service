@@ -3,7 +3,7 @@ package userservice
 import cats.effect.{Async, Ref, Resource, Sync}
 import cats.effect.std.Console
 import cats.syntax.all._
-import userservice.domain.{AccountId, TokenId}
+import userservice.domain.{AccountId, Email, TokenId, TokenKind}
 import fs2.io.net.Network
 import io.circe.syntax._
 import org.typelevel.otel4s.Attribute
@@ -20,14 +20,14 @@ import scala.concurrent.duration.SECONDS
 
 final case class UserAccount(
     id: AccountId,
-    email: String,
+    email: Email,
     createdAt: Instant
 )
 
 /** Internal lookup row for login: carries the stored password hash. */
 final case class StoredAccount(
     id: AccountId,
-    email: String,
+    email: Email,
     passwordHash: String
 )
 
@@ -36,7 +36,7 @@ final case class NewToken(
     id: TokenId,
     userId: AccountId,
     hash: String,
-    kind: String,
+    kind: TokenKind,
     expiresAt: Instant
 )
 
@@ -52,13 +52,13 @@ trait UserStore[F[_]] {
     */
   def createAccount(
       id: AccountId,
-      email: String,
+      email: Email,
       passwordHash: String,
       accessToken: NewToken,
       outbox: EventEnvelope
   ): F[Either[CreateAccountError, UserAccount]]
 
-  def findByEmail(email: String): F[Option[StoredAccount]]
+  def findByEmail(email: Email): F[Option[StoredAccount]]
 
   def recordLoginTokens(
       accessToken: NewToken,
@@ -84,7 +84,7 @@ object UserStore {
 
         def createAccount(
             id: AccountId,
-            email: String,
+            email: Email,
             passwordHash: String,
             accessToken: NewToken,
             envelope: EventEnvelope
@@ -109,7 +109,7 @@ object UserStore {
               case Left(error) => Sync[F].pure(Left(error))
             }
 
-        def findByEmail(email: String): F[Option[StoredAccount]] =
+        def findByEmail(email: Email): F[Option[StoredAccount]] =
           accounts.get.map(_.values.find(_.email == email))
 
         def recordLoginTokens(
@@ -140,12 +140,12 @@ object UserStore {
       VALUES ($uuid, $uuid, $text, $text, $timestamptz)
     """.command
 
-  private val selectByEmail: skunk.Query[String, (UUID, String, String)] =
+  private val selectByEmail: skunk.Query[String, (UUID, String)] =
     sql"""
-      SELECT id, email, password_hash
+      SELECT id, password_hash
       FROM "user_account"
       WHERE email = $text
-    """.query(uuid *: text *: text)
+    """.query(uuid *: text)
 
   private val insertOutboxEvent
       : skunk.Command[(UUID, String, EventEnvelope, String)] =
@@ -207,7 +207,7 @@ object UserStore {
                   .prepare(insertToken)
                   .flatMap(
                     _.execute(
-                      (tokenId, userId, token.hash, token.kind, expiresAt)
+                      (tokenId, userId, token.hash, token.kind.wire, expiresAt)
                     )
                   )
               } yield ()
@@ -219,7 +219,7 @@ object UserStore {
 
               def createAccount(
                   id: AccountId,
-                  email: String,
+                  email: Email,
                   passwordHash: String,
                   accessToken: NewToken,
                   envelope: EventEnvelope
@@ -232,7 +232,9 @@ object UserStore {
                         createdAt <- session
                           .prepare(insertAccount)
                           .flatMap(
-                            _.option((accountId, email, passwordHash))
+                            _.option(
+                              (accountId, Email.render(email), passwordHash)
+                            )
                           )
                         result <- createdAt match {
                           case None     => Sync[F].pure(Left(DuplicateEmail))
@@ -262,20 +264,17 @@ object UserStore {
                 }
 
               def findByEmail(
-                  email: String
+                  email: Email
               ): F[Option[StoredAccount]] =
                 timed("select") {
                   pool.use { session =>
                     session
                       .prepare(selectByEmail)
-                      .flatMap(_.option(email))
+                      .flatMap(_.option(Email.render(email)))
                   }
-                }.map(_.map { case (id, storedEmail, passwordHash) =>
-                  StoredAccount(
-                    AccountId.fromUuid(id),
-                    storedEmail,
-                    passwordHash
-                  )
+                }.map(_.map { case (id, passwordHash) =>
+                  // email is the matched lookup key, so no re-parse of the row.
+                  StoredAccount(AccountId.fromUuid(id), email, passwordHash)
                 })
 
               def recordLoginTokens(

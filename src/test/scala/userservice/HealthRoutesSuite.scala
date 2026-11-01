@@ -2,7 +2,7 @@ package userservice
 
 import cats.effect.IO
 import munit.CatsEffectSuite
-import userservice.domain.AccountId
+import userservice.domain.{AccountId, Email}
 import org.http4s.implicits._
 import org.http4s.{Method, Request, Status}
 
@@ -13,13 +13,13 @@ class HealthRoutesSuite extends CatsEffectSuite {
       def ping: IO[Boolean] = IO.pure(ready)
       def createAccount(
           id: AccountId,
-          email: String,
+          email: Email,
           passwordHash: String,
           accessToken: NewToken,
           outbox: EventEnvelope
       ): IO[Either[CreateAccountError, UserAccount]] =
         IO.raiseError(new NotImplementedError())
-      def findByEmail(email: String): IO[Option[StoredAccount]] =
+      def findByEmail(email: Email): IO[Option[StoredAccount]] =
         IO.pure(None)
       def recordLoginTokens(
           accessToken: NewToken,

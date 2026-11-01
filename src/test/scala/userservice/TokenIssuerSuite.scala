@@ -2,6 +2,7 @@ package userservice
 
 import cats.effect.IO
 import munit.CatsEffectSuite
+import userservice.domain.TokenKind
 
 import scala.concurrent.duration._
 

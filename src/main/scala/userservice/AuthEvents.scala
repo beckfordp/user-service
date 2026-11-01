@@ -7,6 +7,7 @@ import io.circe.generic.semiauto.deriveCodec
 import io.circe.syntax._
 import sttp.tapir.Schema
 import sttp.tapir.Schema.annotations.{description, encodedExample}
+import userservice.domain.{AccountId, Email}
 
 import java.time.Instant
 import java.util.UUID
@@ -46,8 +47,8 @@ object AuthEvents {
 
   /** The `UserRegistered` outbox envelope (US-16.3), correlated by userId. */
   def userRegistered[F[_]: Sync](
-      userId: String,
-      email: String
+      userId: AccountId,
+      email: Email
   ): F[EventEnvelope] =
     for {
       eventId <- Sync[F].delay(UUID.randomUUID().toString)
@@ -57,7 +58,10 @@ object AuthEvents {
       eventType = "UserRegistered",
       timestamp = timestamp,
       source = eventSource,
-      correlationId = userId,
-      payload = UserRegisteredEvent(userId, email).asJson
+      correlationId = AccountId.render(userId),
+      payload = UserRegisteredEvent(
+        AccountId.render(userId),
+        Email.render(email)
+      ).asJson
     )
 }
