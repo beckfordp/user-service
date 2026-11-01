@@ -16,3 +16,6 @@
 ## Phase 4: Smoke test
 - [x] Task: `scripts/verify-rest-docs.sh` — run service, fetch `/docs/docs.yaml`, assert summaries/descriptions/examples + narrowed errors; scalafmtCheck; CI green — PASS 43 checks; fake-auth-example checks; full suite 78/78 d419025
 - [x] Task: Conductor - User Manual Verification 'Phase 4: Smoke test' (Protocol in workflow.md) — `scripts/verify-rest-docs.sh` PASS
+
+## Phase: Review Fixes
+- [x] Task: Apply review suggestions — verify script now waits 180s for readiness and warns when GitHub Packages credentials are unset; rerun PASS 43 checks d0ac403
