@@ -1,0 +1,1 @@
+Phase 2 verification (Effects and capabilities): sbt scalafmtCheckAll scalafmtSbtCheck test -> 66/66 green (incl. Postgres Testcontainers, AppRoutesSuite end-to-end signup). Manual verification = suite (prompting off; refactor only, wire unchanged).
