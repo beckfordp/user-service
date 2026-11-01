@@ -43,7 +43,7 @@
   refresh 30d (`auth` config block). No refresh endpoint yet.
 
 ## Messaging
-- fs2-kafka 3.6.0 and purekafka 0.5.0 — used for the transactional-outbox
+- fs2-kafka 3.6.0 and purekafka 0.6.1 — used for the transactional-outbox
   side of `UserRegistered` (ADR 0008/0009/0010); no direct producer calls.
 - Debezium connector for this service's `outbox_events` added to gluon's
   `infra/k8s/local-infra` when the event lands.
@@ -57,7 +57,7 @@
 - scalafmt (default Scala 3 style) — `sbt scalafmtCheck test` in CI
 
 ## Shared platform library
-- `purerestlib` 0.1.0 (`io.github.beckfordp`) — tracing, structured logging,
+- `purerestlib` 0.4.0 (`io.github.beckfordp`) — tracing, structured logging,
   metrics, resilience, tapir docs. Published artifact from GitHub Packages.
 
 ## Packaging / local deploy
