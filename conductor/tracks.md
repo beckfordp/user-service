@@ -2,9 +2,6 @@
 
 This file tracks all major tracks for the project.
 
-- [x] **Track: ADM-3 — `GET /users/{id}` customer lookup**
-  *Link: [./tracks/user-lookup_20261102/](./tracks/user-lookup_20261102/)*
-
 ---
 
 ## Backlog
