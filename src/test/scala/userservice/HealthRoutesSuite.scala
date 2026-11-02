@@ -21,6 +21,8 @@ class HealthRoutesSuite extends CatsEffectSuite {
         IO.raiseError(new NotImplementedError())
       def findByEmail(email: Email): IO[Option[StoredAccount]] =
         IO.pure(None)
+      def findById(id: AccountId): IO[Option[UserAccount]] =
+        IO.pure(None)
       def recordLoginTokens(
           accessToken: NewToken,
           refreshToken: NewToken

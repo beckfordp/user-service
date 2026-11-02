@@ -3,7 +3,7 @@ package userservice
 import cats.effect.IO
 import cats.effect.testkit.TestControl
 import munit.CatsEffectSuite
-import userservice.domain.{AccountId, TokenId, TokenKind}
+import userservice.domain.{AccountId, Email, TokenId, TokenKind}
 
 import java.time.Instant
 import java.util.UUID
@@ -101,6 +101,31 @@ class UserStoreSuite extends CatsEffectSuite {
       missing <- store.findByEmail(TestValues.email("unknown@example.com"))
     } yield {
       assertEquals(found.map(_.passwordHash), Some("stored-hash"))
+      assertEquals(missing, None)
+    }
+  }
+
+  test(
+    "findById returns the account without the password hash and None when unknown"
+  ) {
+    for {
+      store <- UserStore.inMemory[IO]
+      _ <- store.createAccount(
+        accountId,
+        TestValues.email("ada@example.com"),
+        "stored-hash",
+        token(newTokenId(), accountId, TokenKind.Access),
+        envelope
+      )
+      found <- store.findById(accountId)
+      missing <- store.findById(accountId2)
+    } yield {
+      assertEquals(
+        found.map(account =>
+          (AccountId.render(account.id), Email.render(account.email))
+        ),
+        Some((AccountId.render(accountId), "ada@example.com"))
+      )
       assertEquals(missing, None)
     }
   }

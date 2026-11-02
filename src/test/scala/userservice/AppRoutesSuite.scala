@@ -4,7 +4,7 @@ import cats.effect.{IO, Resource}
 import munit.CatsEffectSuite
 import org.http4s.circe.CirceEntityCodec._
 import org.http4s.implicits._
-import org.http4s.{HttpRoutes, Method, Request, Status}
+import org.http4s.{HttpRoutes, Method, Request, Status, Uri}
 import org.typelevel.log4cats.noop.NoOpLogger
 import purerest.metrics.Metrics
 import purerest.tracing.Tracing
@@ -108,6 +108,30 @@ class AppRoutesSuite extends CatsEffectSuite {
             .withEntity(SignupRequest("ada@example.com", "correct horse"))
         )
         .map(response => assertEquals(response.status, Status.Created))
+    }
+  }
+
+  test("GET /users/{id} resolves and returns the signed-up account") {
+    withRoutes { routes =>
+      for {
+        signup <- routes.orNotFound.run(
+          Request[IO](Method.POST, uri"/auth/signup")
+            .withEntity(SignupRequest("ada@example.com", "correct horse"))
+        )
+        created <- signup.as[SignupResponse]
+        response <- routes.orNotFound.run(
+          Request[IO](
+            Method.GET,
+            Uri.unsafeFromString(s"/users/${created.userId}")
+          )
+        )
+        body <- response.as[UserResponse]
+      } yield {
+        assertEquals(signup.status, Status.Created)
+        assertEquals(response.status, Status.Ok)
+        assertEquals(body.userId, created.userId)
+        assertEquals(body.email, "ada@example.com")
+      }
     }
   }
 }

@@ -27,6 +27,10 @@ the generated CRUD surface is not an intended public API.
   never stored or logged in plaintext.
 - `POST /auth/signup` and `POST /auth/login` are the only public auth
   contracts for now (see `gluon/docs/system-design.md`).
+- `GET /users/{id}` is an unauthenticated local/demo read for recipient
+  resolution (ADM-3, ADR 0025): user id → `{userId, email, createdAt}`;
+  a malformed id is `400`, an unknown one `404`. It is a deliberate read
+  endpoint, not the stripped generated CRUD surface.
 
 ## User stories in scope
 From `../../../docs/user-stories.md`:

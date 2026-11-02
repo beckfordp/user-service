@@ -30,6 +30,7 @@ class UserDocsSuite extends CatsEffectSuite {
         tokens,
         NoOpLogger[IO]
       ),
+      UserRoutes.getUserServerEndpoint[IO](store, NoOpLogger[IO]),
       HealthRoutes.healthServerEndpoint[IO],
       HealthRoutes.readyServerEndpoint[IO](store)
     )
@@ -66,6 +67,7 @@ class UserDocsSuite extends CatsEffectSuite {
         List(
           List(400, 400, 409),
           List(400, 400, 401),
+          List(404),
           Nil,
           List(503)
         )

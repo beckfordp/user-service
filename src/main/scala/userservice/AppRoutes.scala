@@ -52,6 +52,7 @@ object AppRoutes {
           tokens,
           telemetry.logger
         ),
+        UserRoutes.getUserServerEndpoint[F](store, telemetry.logger),
         HealthRoutes.healthServerEndpoint[F],
         HealthRoutes.readyServerEndpoint[F](store)
       )

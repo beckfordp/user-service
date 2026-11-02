@@ -29,7 +29,8 @@ final case class UserAccount(
 final case class StoredAccount(
     id: AccountId,
     email: Email,
-    passwordHash: String
+    passwordHash: String,
+    createdAt: Instant
 )
 
 /** A token about to be persisted; its raw value never reaches the store. */
@@ -60,6 +61,11 @@ trait UserStore[F[_]] {
   ): F[Either[CreateAccountError, UserAccount]]
 
   def findByEmail(email: Email): F[Option[StoredAccount]]
+
+  /** Public identity read (ADM-3/ADR 0025): customerId → account, without the
+    * stored password hash.
+    */
+  def findById(id: AccountId): F[Option[UserAccount]]
 
   def recordLoginTokens(
       accessToken: NewToken,
@@ -97,7 +103,12 @@ object UserStore {
                   (current, Left(DuplicateEmail))
                 } else {
                   (
-                    current + (id -> StoredAccount(id, email, passwordHash)),
+                    current + (id -> StoredAccount(
+                      id,
+                      email,
+                      passwordHash,
+                      now
+                    )),
                     Right(UserAccount(id, email, now))
                   )
                 }
@@ -114,6 +125,13 @@ object UserStore {
 
         def findByEmail(email: Email): F[Option[StoredAccount]] =
           accounts.get.map(_.values.find(_.email == email))
+
+        def findById(id: AccountId): F[Option[UserAccount]] =
+          accounts.get.map(
+            _.get(id).map(stored =>
+              UserAccount(stored.id, stored.email, stored.createdAt)
+            )
+          )
 
         def recordLoginTokens(
             accessToken: NewToken,
@@ -143,12 +161,20 @@ object UserStore {
       VALUES ($uuid, $uuid, $text, $text, $timestamptz)
     """.command
 
-  private val selectByEmail: skunk.Query[String, (UUID, String)] =
+  private val selectByEmail
+      : skunk.Query[String, (UUID, String, OffsetDateTime)] =
     sql"""
-      SELECT id, password_hash
+      SELECT id, password_hash, created_at
       FROM "user_account"
       WHERE email = $text
-    """.query(uuid *: text)
+    """.query(uuid *: text *: timestamptz)
+
+  private val selectById: skunk.Query[UUID, (UUID, String, OffsetDateTime)] =
+    sql"""
+      SELECT id, email, created_at
+      FROM "user_account"
+      WHERE id = $uuid
+    """.query(uuid *: text *: timestamptz)
 
   private val insertOutboxEvent
       : skunk.Command[(UUID, String, EventEnvelope, String)] =
@@ -275,9 +301,29 @@ object UserStore {
                       .prepare(selectByEmail)
                       .flatMap(_.option(Email.render(email)))
                   }
-                }.map(_.map { case (id, passwordHash) =>
+                }.map(_.map { case (id, passwordHash, createdAt) =>
                   // email is the matched lookup key, so no re-parse of the row.
-                  StoredAccount(AccountId.fromUuid(id), email, passwordHash)
+                  StoredAccount(
+                    AccountId.fromUuid(id),
+                    email,
+                    passwordHash,
+                    createdAt.toInstant
+                  )
+                })
+
+              def findById(id: AccountId): F[Option[UserAccount]] =
+                timed("select") {
+                  pool.use { session =>
+                    session
+                      .prepare(selectById)
+                      .flatMap(_.option(AccountId.uuid(id)))
+                  }
+                }.map(_.map { case (userId, email, createdAt) =>
+                  UserAccount(
+                    AccountId.fromUuid(userId),
+                    Email.fromStored(email),
+                    createdAt.toInstant
+                  )
                 })
 
               def recordLoginTokens(

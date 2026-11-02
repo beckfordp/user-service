@@ -5,7 +5,7 @@ import cats.syntax.all._
 import com.dimafeng.testcontainers.PostgreSQLContainer
 import com.dimafeng.testcontainers.munit.TestContainerForAll
 import munit.CatsEffectSuite
-import userservice.domain.{AccountId, TokenId, TokenKind}
+import userservice.domain.{AccountId, Email, TokenId, TokenKind}
 
 import java.util.UUID
 import org.testcontainers.utility.DockerImageName
@@ -165,6 +165,33 @@ class UserStorePostgresSuite extends CatsEffectSuite with TestContainerForAll {
           missing <- store.findByEmail(TestValues.email("missing@example.com"))
         } yield {
           assertEquals(found.map(_.passwordHash), Some("stored-hash"))
+          assertEquals(missing, None)
+        }
+      }
+    }
+  }
+
+  test("findById returns the persisted account and None when unknown") {
+    withContainers { postgres =>
+      withStore(postgres) { store =>
+        for {
+          userId <- IO(uniqueId())
+          _ <- store.createAccount(
+            userId,
+            TestValues.email("lookup-by-id@example.com"),
+            "stored-hash",
+            token(uniqueTokenId(), userId, TokenKind.Access),
+            envelope
+          )
+          found <- store.findById(userId)
+          missing <- store.findById(uniqueId())
+        } yield {
+          assertEquals(found.map(_.id), Some(userId))
+          assertEquals(
+            found.map(account => Email.render(account.email)),
+            Some("lookup-by-id@example.com")
+          )
+          assert(found.exists(_.createdAt.isAfter(Instant.EPOCH)))
           assertEquals(missing, None)
         }
       }

@@ -37,6 +37,10 @@ curl -X POST http://localhost:8080/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"ada@example.com","password":"correct horse battery"}'
 
+# Public identity for recipient resolution (ADM-3): userId -> email.
+# Unknown id -> 404; malformed id -> 400.
+curl http://localhost:8080/users/5b6c7d8e-9f0a-4b1c-8d2e-3f4a5b6c7d8e
+
 # Liveness / readiness
 curl http://localhost:8080/health
 curl http://localhost:8080/health/ready

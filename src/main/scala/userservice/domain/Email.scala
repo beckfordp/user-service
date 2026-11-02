@@ -17,4 +17,10 @@ object Email {
   }
 
   def render(value: Email): String = value
+
+  /** Trusts a value already normalized when it was stored (signup parses before
+    * insert). Used only for values read back from the database, so a read never
+    * re-validates or throws.
+    */
+  def fromStored(raw: String): Email = raw
 }
