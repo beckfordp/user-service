@@ -27,7 +27,11 @@ object Main extends IOApp.Simple {
       UserServiceConfig.loadValidated[IO]
     )
     _ <- Migrations.resource[IO](config.postgres)
-    telemetry <- Telemetry.resource[IO](config.serviceName, config.metricsPort)
+    telemetry <- Telemetry.resource[IO](
+      config.serviceName,
+      config.metricsPort,
+      Some(runtime.metrics)
+    )
     _ <- Resource.eval(
       telemetry.logger.info(
         Map(
@@ -36,7 +40,9 @@ object Main extends IOApp.Simple {
         )
       )("user-service starting")
     )
-    store <- UserStore.postgres[IO](config.postgres, telemetry.meter)
+    store <- UserStore
+      .postgres[IO](config.postgres, telemetry.meter)
+      .evalMap(UserJourneyMetrics.instrument[IO](_, telemetry.meter))
     hasher <- Resource.eval(PasswordHasher.pbkdf2[IO](config.auth.iterations))
     tokens <- Resource.eval(
       TokenIssuer.secureRandom[IO](
