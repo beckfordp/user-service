@@ -14,6 +14,10 @@ import userservice.domain.AccountId
   */
 object UserJourneyMetrics {
 
+  def outcome(error: CreateAccountError): String = error match {
+    case DuplicateEmail => "duplicate"
+  }
+
   def instrument[F[_]: Monad](
       store: UserStore[F],
       meter: Meter[F]
@@ -36,10 +40,7 @@ object UserJourneyMetrics {
             .createAccount(id, email, passwordHash, accessToken, outbox)
             .flatTap(result =>
               registrations.inc(
-                Attribute(
-                  "outcome",
-                  result.fold(_ => "duplicate", _ => "created")
-                )
+                Attribute("outcome", result.fold(outcome, _ => "created"))
               )
             )
 
