@@ -41,7 +41,7 @@ object Main extends IOApp.Simple {
       )("user-service starting")
     )
     store <- UserStore
-      .postgres[IO](config.postgres, telemetry.meter)
+      .postgres[IO](config.postgres, telemetry.meter, telemetry.tracer)
       .evalMap(UserJourneyMetrics.instrument[IO](_, telemetry.meter))
     hasher <- Resource.eval(PasswordHasher.pbkdf2[IO](config.auth.iterations))
     tokens <- Resource.eval(

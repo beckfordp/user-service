@@ -10,7 +10,9 @@ import userservice.domain.{AccountId, Email, TokenId, TokenKind}
 import java.util.UUID
 import org.testcontainers.utility.DockerImageName
 import org.typelevel.otel4s.metrics.Meter
+import org.typelevel.otel4s.trace.Tracer
 import purerest.metrics.{LatencyBuckets, Metrics}
+import purerest.tracing.Tracing
 
 import scala.jdk.CollectionConverters._
 
@@ -33,12 +35,15 @@ class UserStorePostgresSuite extends CatsEffectSuite with TestContainerForAll {
       password = postgres.password
     )
 
-  private def withStore[A](postgres: PostgreSQLContainer)(
+  private def withStore[A](
+      postgres: PostgreSQLContainer,
+      tracer: Tracer[IO] = Tracer.noop[IO]
+  )(
       f: UserStore[IO] => IO[A]
   ): IO[A] =
     Migrations.run[IO](configFor(postgres)) *>
       UserStore
-        .postgres[IO](configFor(postgres), Meter.noop[IO])
+        .postgres[IO](configFor(postgres), Meter.noop[IO], tracer)
         .use(f)
 
   private def query(
@@ -290,7 +295,7 @@ class UserStorePostgresSuite extends CatsEffectSuite with TestContainerForAll {
       Metrics.test[IO]("user-store-buckets-test").use { testMeter =>
         Migrations.run[IO](configFor(postgres)) *>
           UserStore
-            .postgres[IO](configFor(postgres), testMeter.meter)
+            .postgres[IO](configFor(postgres), testMeter.meter, Tracer.noop[IO])
             .use { store =>
               for {
                 _ <- store.ping
@@ -311,6 +316,56 @@ class UserStorePostgresSuite extends CatsEffectSuite with TestContainerForAll {
                 }
               }
             }
+      }
+    }
+  }
+
+  test(
+    "PERF-5.4: UserRegistered's outbox row carries the span's traceparent; outside a span, NULL"
+  ) {
+    withContainers { postgres =>
+      def register(store: UserStore[IO], userId: AccountId, email: String) =
+        store.createAccount(
+          userId,
+          TestValues.email(email),
+          "pbkdf2$1000$salt$hash",
+          token(uniqueTokenId(), userId, TokenKind.Access),
+          envelope.copy(correlationId = AccountId.render(userId))
+        )
+      def traceParents(userId: AccountId) =
+        query(
+          postgres,
+          s"select coalesce(trace_parent, 'NULL') from outbox_events where aggregate_id = '$userId'"
+        )
+      Tracing.test[IO]("outbox-traceparent").use { testTracer =>
+        withStore(postgres, testTracer.tracer) { store =>
+          val inSpan = uniqueId()
+          val outside = uniqueId()
+          for {
+            traceId <- testTracer.tracer.span("signup").use { span =>
+              register(
+                store,
+                inSpan,
+                s"in-span-${AccountId.render(inSpan)}@example.com"
+              )
+                .as(span.context.traceIdHex)
+            }
+            _ <- register(
+              store,
+              outside,
+              s"outside-${AccountId.render(outside)}@example.com"
+            )
+            inSpanRows <- traceParents(inSpan)
+            outsideRows <- traceParents(outside)
+          } yield {
+            assertEquals(inSpanRows.size, 1)
+            assert(
+              inSpanRows.head.matches(s"00-$traceId-[0-9a-f]{16}-[0-9a-f]{2}"),
+              s"expected 00-$traceId-<span>-<flags>, got: $inSpanRows"
+            )
+            assertEquals(outsideRows, List("NULL"))
+          }
+        }
       }
     }
   }

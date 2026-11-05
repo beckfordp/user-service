@@ -1,6 +1,6 @@
 package userservice
 
-import cats.Monad
+import cats.{FlatMap, Monad}
 import cats.effect.{Async, Clock, Ref, Resource, Sync}
 import cats.effect.std.Console
 import cats.syntax.all._
@@ -9,6 +9,8 @@ import fs2.io.net.Network
 import io.circe.syntax._
 import org.typelevel.otel4s.Attribute
 import org.typelevel.otel4s.metrics.Meter
+import org.typelevel.otel4s.trace.Tracer
+import purekafka.tracing.KafkaTracing
 import purerest.metrics.{LatencyBuckets, PoolMetrics}
 import skunk.Session
 import skunk.circe.codec.all.jsonb
@@ -176,12 +178,28 @@ object UserStore {
       WHERE id = $uuid
     """.query(uuid *: text *: timestamptz)
 
+  // `trace_parent` is the active span's W3C traceparent (PERF-5.4); Debezium
+  // lifts it to a `traceparent` header. NULL when written outside a span.
   private val insertOutboxEvent
-      : skunk.Command[(UUID, String, EventEnvelope, String)] =
+      : skunk.Command[(UUID, String, EventEnvelope, String, Option[String])] =
     sql"""
-      INSERT INTO outbox_events (id, aggregate_id, payload, correlation_id)
-      VALUES ($uuid, $text, ${jsonb[EventEnvelope]}, $text)
+      INSERT INTO outbox_events (id, aggregate_id, payload, correlation_id, trace_parent)
+      VALUES ($uuid, $text, ${jsonb[EventEnvelope]}, $text, ${text.opt})
     """.command
+
+  /** Writes one outbox row in `session`'s transaction, stamped with the active
+    * trace context (`KafkaTracing.traceParent`).
+    */
+  private def insertOutbox[F[_]: FlatMap](
+      tracer: Tracer[F],
+      session: Session[F],
+      row: (UUID, String, EventEnvelope, String)
+  ): F[Unit] =
+    KafkaTracing
+      .traceParent(tracer)
+      .flatMap(tp =>
+        session.prepare(insertOutboxEvent).flatMap(_.execute(row :* tp)).void
+      )
 
   private val pingQuery: skunk.Query[skunk.Void, Int] = sql"SELECT 1".query(
     int4
@@ -189,7 +207,8 @@ object UserStore {
 
   def postgres[F[_]: Async: Console: Network](
       config: PostgresConfig,
-      meter: Meter[F]
+      meter: Meter[F],
+      tracer: Tracer[F]
   ): Resource[F, UserStore[F]] = {
     import org.typelevel.otel4s.trace.Tracer.Implicits.noop
     import org.typelevel.otel4s.metrics.Meter.Implicits.noop
@@ -272,18 +291,16 @@ object UserStore {
                             for {
                               _ <- storeToken(session, accessToken)
                               outboxId <- Sync[F].delay(UUID.randomUUID())
-                              _ <- session
-                                .prepare(insertOutboxEvent)
-                                .flatMap(
-                                  _.execute(
-                                    (
-                                      outboxId,
-                                      AccountId.render(id),
-                                      envelope,
-                                      envelope.correlationId
-                                    )
-                                  )
+                              _ <- insertOutbox(
+                                tracer,
+                                session,
+                                (
+                                  outboxId,
+                                  AccountId.render(id),
+                                  envelope,
+                                  envelope.correlationId
                                 )
+                              )
                             } yield Right(
                               UserAccount(id, email, at.toInstant)
                             )
