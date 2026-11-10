@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package userservice.domain
 
 /** Kind of an issued token; `wire` is the `auth_tokens.kind` column value. */

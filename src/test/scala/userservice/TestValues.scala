@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package userservice
 
 import userservice.domain.{Email, Password}

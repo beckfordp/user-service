@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package userservice.domain
 
 /** A plaintext password on its way to the hasher. `toString` is redacted so it

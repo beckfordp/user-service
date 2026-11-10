@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- user_account, not "user": reserved PostgreSQL keyword.
 CREATE TABLE "user_account" (
     id UUID PRIMARY KEY,

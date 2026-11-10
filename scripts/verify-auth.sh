@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # Live verification for track signup-login_20261028 (US-16.1–16.3).
 # Proves against the real local cluster: signup 201 + one user row + one
 # access token + one UserRegistered outbox row and Kafka message; duplicate

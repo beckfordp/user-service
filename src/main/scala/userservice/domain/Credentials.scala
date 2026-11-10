@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package userservice.domain
 
 final case class SignupCredentials(email: Email, password: Password)

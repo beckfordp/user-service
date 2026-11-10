@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package userservice.domain
 
 import java.util.Locale
